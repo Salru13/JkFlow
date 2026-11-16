@@ -1,0 +1,59 @@
+JkFlow 1.00 Wine PS4 runtime: WoW64 log folder and TLS note (wowblur.prx, wow64native.prx, ws2_32.prx)
+
+
+ src/native/pw_emutls_ps4.c
+ src/native/pw_wow_log_ps4.c
+---
+diff --git a/src/native/pw_emutls_ps4.c b/src/native/pw_emutls_ps4.c
+--- a/src/native/pw_emutls_ps4.c
++++ b/src/native/pw_emutls_ps4.c
+@@ -76,7 +76,7 @@
+     (void)sceKernelAvailableFlexibleMemorySize(&flexible_before);
+     if (posix_memalign( &object, align, control->size ) || !object) return NULL;
+     (void)sceKernelAvailableFlexibleMemorySize(&flexible_after);
+-    pw_wow_log("wowprospero memory: emutls object=%p bytes=%zu flexible_before=%zuK flexible_after=%zuK\n",
++    pw_wow_log("wowblur memory: emutls object=%p bytes=%zu flexible_before=%zuK flexible_after=%zuK\n",
+                object, control->size, flexible_before >> 10, flexible_after >> 10);
+     if (control->value) memcpy( object, control->value, control->size );
+     else memset( object, 0, control->size );
+diff --git a/src/native/pw_wow_log_ps4.c b/src/native/pw_wow_log_ps4.c
+--- a/src/native/pw_wow_log_ps4.c
++++ b/src/native/pw_wow_log_ps4.c
+@@ -26,8 +26,11 @@
+ 
+ /* Beside the title's own session logs. prospero-win makes that directory, and
+  * both are pulled off with scripts/ftp-get.py. */
+-#define PW_WOW_LOG_DIR  "/data/prospero-win/logs"
+-#define PW_WOW_LOG_PATH PW_WOW_LOG_DIR "/wowprospero.log"
++/* BLUR 1.00 (decision 28): the folder comes from the title (BLUR_LOG_DIR); without it the
++ * bench dev root /data/blurdev/logs, which is never created here (BLUR never has it). */
++#define PW_WOW_LOG_DEV_DIR "/data/blurdev/logs"
++#define PW_WOW_LOG_NAME    "/wowblur.log"
++#include <stdlib.h>
+ 
+ int sceKernelDebugOutText(int channel, const char *text);
+ 
+@@ -51,11 +54,18 @@
+     /* ⚠ 0777/0666 and a chmod: GoldHEN's FTP server does not run as the title,
+      * so anything it makes 0700 cannot be read off the console afterwards --
+      * which is exactly how the title's own session logs ended up unreadable. */
+-    if ((fd = open(PW_WOW_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) {
+-        (void)mkdir("/data/prospero-win", 0777);
+-        (void)mkdir(PW_WOW_LOG_DIR, 0777);
+-        (void)chmod(PW_WOW_LOG_DIR, 0777);
+-        if ((fd = open(PW_WOW_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) return;
++    {
++        const char *dir = getenv("BLUR_LOG_DIR");
++        const int title_dir = dir && dir[0];
++        char path[256];
++        const int n = snprintf(path, sizeof(path), "%s" PW_WOW_LOG_NAME, title_dir ? dir : PW_WOW_LOG_DEV_DIR);
++        if (n <= 0 || n >= (int)sizeof(path)) return;
++        if ((fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) {
++            if (!title_dir) return;   /* never create the dev root */
++            (void)mkdir(dir, 0777);
++            (void)chmod(dir, 0777);
++            if ((fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) return;
++        }
+     }
+     (void)fchmod(fd, 0666);   /* the title's umask masks the mode above */
+     (void)!write(fd, line, (size_t)length);

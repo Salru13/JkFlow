@@ -1,0 +1,303 @@
+JkFlow 1.00 Wine PS4 runtime: ntdll: thread/signal changes of the shipped ntdll (cs-sampler build)
+
+
+ dlls/ntdll/unix/signal_x86_64.c
+ dlls/ntdll/unix/thread.c
+ dlls/ntdll/unix/native285-cs-sampler-core.h
+ dlls/ntdll/unix/native285-cs-sampler-impl.h
+---
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -3496,6 +3496,8 @@
+ }
+ #endif
+ 
++#include "native285-cs-sampler-impl.h"
++
+ /**********************************************************************
+  *		signal_init_process
+  */
+@@ -3598,6 +3600,7 @@
+     /* All nine raw registrations succeeded. The CPU backend still checks
+      * its own process/thread prerequisites before entering guest mode. */
+     __atomic_store_n( &pw_native_caps, pw_native_ready_caps(), __ATOMIC_RELEASE );
++    pw_cs_init();
+     TRACE_(seh)( "PW_NATIVE_PROVIDER caps=%u syscall=%p sysarch=%p cs=%x ss=%x features=%llx xstate=%u avx_offset=%u avx_size=%u\n",
+                  pw_native_caps, (void *)pw_native_kernel.syscall,
+                  (void *)pw_native_kernel.sysarch, cs64_sel, ds64_sel,
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -76,6 +76,12 @@
+ #include "wine/server.h"
+ #include "wine/debug.h"
+ #include "unix_private.h"
++#ifdef __PROSPERO__
++extern void pw_cs_sampler_name(HANDLE, const UNICODE_STRING *);
++extern void pw_cs_sampler_exit(void);
++extern void pw_cs_sampler_abort(void);
++extern void pw_cs_sampler_before_reap(struct thread_data *);
++#endif
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(thread);
+ WINE_DECLARE_DEBUG_CHANNEL(seh);
+@@ -1562,6 +1568,9 @@
+ {
+     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
+     if (InterlockedDecrement( &nb_threads ) <= 0) abort_process( status );
++#ifdef __PROSPERO__
++    pw_cs_sampler_abort();
++#endif
+     pthread_exit_wrapper( status );
+ }
+ 
+@@ -1591,10 +1600,16 @@
+     {
+         if (data->pthread_id)
+         {
++#ifdef __PROSPERO__
++            pw_cs_sampler_before_reap(data);
++#endif
+             pthread_join( data->pthread_id, NULL );
+             virtual_free_thread_data( data );
+         }
+     }
++#ifdef __PROSPERO__
++    pw_cs_sampler_exit();
++#endif
+     pthread_exit_wrapper( status );
+ }
+ 
+@@ -1615,6 +1630,9 @@
+      * in-process server it is gone; the server already holds the process as
+      * terminated, so it sees its last user process end and flags it
+      * (series 1053), and the title's frame loop restarts into the launcher. */
++#ifdef __PROSPERO__
++    pw_cs_sampler_exit();
++#endif
+     pthread_exit_wrapper( status );
+ #else
+     process_exit_wrapper( get_unix_exit_code( status ));
+@@ -2134,6 +2152,9 @@
+ 
+ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
+ {
++#ifdef __PROSPERO__
++    pw_cs_sampler_name(handle, name);
++#endif
+ #ifdef linux
+     unsigned int status;
+     char path[64], nameA[64];
+diff --git a/dlls/ntdll/unix/native285-cs-sampler-core.h b/dlls/ntdll/unix/native285-cs-sampler-core.h
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native285-cs-sampler-core.h
+@@ -0,0 +1,25 @@
++/* One producer (target signal), one reader, append-only bounded storage. */
++#define PW_CS_SAMPLES 1000u
++struct pw_cs_sample { unsigned long long pc, sp; unsigned int cs, request; };
++struct pw_cs_ring {
++    unsigned int active, pending, count;
++    struct pw_cs_sample sample[PW_CS_SAMPLES];
++};
++_Static_assert(__atomic_always_lock_free(sizeof(unsigned int), 0), "signal atomics must be lock-free");
++static inline void pw_cs_capture(struct pw_cs_ring *r, unsigned long long pc,
++                                  unsigned long long sp, unsigned int cs)
++{
++    unsigned int n, request;
++    if (!__atomic_load_n(&r->active, __ATOMIC_ACQUIRE)) return;
++    request = __atomic_load_n(&r->pending, __ATOMIC_ACQUIRE);
++    if (!request) return;
++    n = __atomic_load_n(&r->count, __ATOMIC_RELAXED);
++    if (n < PW_CS_SAMPLES) {
++        r->sample[n].pc = pc;
++        r->sample[n].sp = sp;
++        r->sample[n].cs = cs;
++        r->sample[n].request = request;
++        __atomic_store_n(&r->count, n + 1, __ATOMIC_RELEASE);
++    }
++    __atomic_store_n(&r->pending, 0, __ATOMIC_RELEASE);
++}
+diff --git a/dlls/ntdll/unix/native285-cs-sampler-impl.h b/dlls/ntdll/unix/native285-cs-sampler-impl.h
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native285-cs-sampler-impl.h
+@@ -0,0 +1,177 @@
++/* Included privately in the actual signal_x86_64.c; no exported ABI. */
++#ifdef __PROSPERO__
++#include "native285-cs-sampler-core.h"
++static struct pw_cs_ring pw_cs_ring;
++static struct thread_data *pw_cs_target;
++static pthread_t pw_cs_target_pthread, pw_cs_worker;
++static unsigned int pw_cs_mode, pw_cs_claimed, pw_cs_stop, pw_cs_joinable, pw_cs_done, pw_cs_abort_seen;
++static unsigned int pw_cs_delay_ms = 60000;
++static unsigned int pw_cs_tid;
++static unsigned long long pw_cs_request_ns[PW_CS_SAMPLES], pw_cs_observed_ns[PW_CS_SAMPLES];
++
++/* No TLS, function calls, memory discovery, logging, allocation or locking.
++ * SA_ONSTACK supplies Wine's existing aligned per-thread signal stack. The
++ * pointer comparison itself does not dereference an unrelated thread stack.
++ * Kernel sigreturn preserves the interrupted FS/CS/general registers. */
++static void __attribute__((no_stack_protector))
++pw_cs_handler(int signal, siginfo_t *info, void *context)
++{
++    ucontext_t *uc = context;
++    if (get_current_thread_data() != __atomic_load_n(&pw_cs_target, __ATOMIC_ACQUIRE)) return;
++    pw_cs_capture(&pw_cs_ring, RIP_sig(uc), RSP_sig(uc), CS_sig(uc));
++}
++
++static unsigned long long pw_cs_now(void)
++{
++    struct timespec t;
++    if (clock_gettime(CLOCK_MONOTONIC, &t)) return 0;
++    return (unsigned long long)t.tv_sec * 1000000000 + t.tv_nsec;
++}
++
++static void pw_cs_log(const char *line)
++{
++    wine_write_stderr(line, strlen(line));
++}
++
++static void *pw_cs_run(void *unused)
++{
++    unsigned int i, sent = 0, skipped = 0, errors = 0, count, pending, observed = 0;
++    unsigned long long start, end;
++    char line[256];
++    struct timespec delay = {0, 10000000};
++    for (i = 0; i < pw_cs_delay_ms / 10 && !__atomic_load_n(&pw_cs_stop, __ATOMIC_ACQUIRE); ++i)
++        nanosleep(&delay, NULL);
++    start = pw_cs_now();
++    snprintf(line, sizeof(line), "PW_CS_PC_BEGIN v=1 tid=%04x name=dxvk-cs clock=monotonic ns=%llu attempts=1000 period_ms=10 delay_ms=%u cs64=%x\n", pw_cs_tid, start, pw_cs_delay_ms, cs64_sel);
++    pw_cs_log(line);
++    __atomic_store_n(&pw_cs_ring.active, 1, __ATOMIC_RELEASE);
++    for (i = 0; i < PW_CS_SAMPLES && !__atomic_load_n(&pw_cs_stop, __ATOMIC_ACQUIRE); ++i) {
++        count = __atomic_load_n(&pw_cs_ring.count, __ATOMIC_ACQUIRE);
++        if (count > observed) {
++            unsigned long long now = pw_cs_now();
++            while (observed < count) pw_cs_observed_ns[observed++] = now;
++        }
++        if (__atomic_load_n(&pw_cs_ring.pending, __ATOMIC_ACQUIRE)) ++skipped;
++        else {
++            pw_cs_request_ns[i] = pw_cs_now();
++            __atomic_store_n(&pw_cs_ring.pending, i + 1, __ATOMIC_RELEASE);
++            if (pthread_kill(pw_cs_target_pthread, SIGWINCH)) {
++                ++errors;
++                __atomic_store_n(&pw_cs_ring.pending, 0, __ATOMIC_RELEASE);
++            } else ++sent;
++        }
++        nanosleep(&delay, NULL);
++    }
++    __atomic_store_n(&pw_cs_ring.active, 0, __ATOMIC_RELEASE);
++    end = pw_cs_now();
++    count = __atomic_load_n(&pw_cs_ring.count, __ATOMIC_ACQUIRE);
++    if (count > observed) {
++        unsigned long long now = pw_cs_now();
++        while (observed < count) pw_cs_observed_ns[observed++] = now;
++    }
++    pending = __atomic_load_n(&pw_cs_ring.pending, __ATOMIC_ACQUIRE);
++    /* Entries below this acquire snapshot are immutable. No output in window. */
++    for (i = 0; i < count; ++i) {
++        const struct pw_cs_sample *s = &pw_cs_ring.sample[i];
++        snprintf(line, sizeof(line), "PW_CS_PC v=1 tid=%04x n=%u request=%u pc=%llx sp=%llx cs=%x request_ns=%llu observed_ns=%llu\n", pw_cs_tid, i, s->request, s->pc, s->sp, s->cs, pw_cs_request_ns[s->request - 1], pw_cs_observed_ns[i]);
++        pw_cs_log(line);
++    }
++    snprintf(line, sizeof(line), "PW_CS_PC_END v=1 tid=%04x ns=%llu samples=%u sent=%u skipped_pending=%u send_errors=%u pending=%u stopped=%u abort_any_thread=%u scope=delivered-interrupted-pc\n", pw_cs_tid, end, count, sent, skipped, errors, pending, __atomic_load_n(&pw_cs_stop, __ATOMIC_ACQUIRE), __atomic_load_n(&pw_cs_abort_seen, __ATOMIC_ACQUIRE));
++    pw_cs_log(line);
++    __atomic_store_n(&pw_cs_done, 1, __ATOMIC_RELEASE);
++    return NULL;
++}
++
++static void pw_cs_init(void)
++{
++    const char *mode = getenv("PW_CS_PC_SAMPLE"), *delay;
++    struct sigaction action = {0}, previous;
++    unsigned long value;
++    char *end;
++    if (!mode || strcmp(mode, "1")) return;
++    /* Reuse the already-tested native context route, not guessed offsets. */
++    if (!pw_native_kernel.syscall) { pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=unverified-native-frame\n"); return; }
++    if (pw_native_sigaction(SIGWINCH, NULL, &previous) ||
++        (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN)) {
++        pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=signal-owned\n"); return;
++    }
++    delay = getenv("PW_CS_PC_DELAY_MS");
++    if (delay && *delay) {
++        value = strtoul(delay, &end, 10);
++        if (*end || value > 120000 || value % 10) {
++            pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=invalid-delay\n"); return;
++        }
++        pw_cs_delay_ms = value;
++    }
++    action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
++    sigemptyset(&action.sa_mask);
++    action.sa_sigaction = pw_cs_handler;
++    if (pw_native_sigaction(SIGWINCH, &action, NULL)) {
++        pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=install-failed\n"); return;
++    }
++    pw_cs_mode = 1;
++    pw_cs_log("PW_CS_PC_MODE v=1 enabled=1 target=self-named-dxvk-cs limit=1000 period_ms=10\n");
++}
++
++void pw_cs_sampler_name(HANDLE handle, const UNICODE_STRING *name)
++{
++    static const WCHAR wanted[] = {'d','x','v','k','-','c','s'};
++    sigset_t oldmask;
++    unsigned int expected = 0;
++    int rc;
++    if (!pw_cs_mode || handle != GetCurrentThread() || name->Length != sizeof(wanted) ||
++        memcmp(name->Buffer, wanted, sizeof(wanted))) return;
++    /* Block Wine's termination signals through publication and pthread_create. */
++    if (pthread_sigmask(SIG_BLOCK, &server_block_set, &oldmask)) {
++        pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=mask-failed\n"); return;
++    }
++    /* A blocked target must retain its original mask.  Refuse rather than
++     * unblocking a signal the application intentionally blocked. */
++    if (sigismember(&oldmask, SIGWINCH) != 0) {
++        pthread_sigmask(SIG_SETMASK, &oldmask, NULL);
++        pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=target-signal-blocked\n");
++        return;
++    }
++    if (!__atomic_compare_exchange_n(&pw_cs_claimed, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
++        pthread_sigmask(SIG_SETMASK, &oldmask, NULL); return;
++    }
++    __atomic_store_n(&pw_cs_target, get_thread_data(), __ATOMIC_RELEASE);
++    pw_cs_target_pthread = pthread_self();
++    pw_cs_tid = GetCurrentThreadId();
++    rc = pthread_create(&pw_cs_worker, NULL, pw_cs_run, NULL);
++    if (!rc) __atomic_store_n(&pw_cs_joinable, 1, __ATOMIC_RELEASE);
++    else pw_cs_log("PW_CS_PC_MODE v=1 enabled=0 reason=worker-create-failed\n");
++    pthread_sigmask(SIG_SETMASK, &oldmask, NULL);
++}
++
++void pw_cs_sampler_exit(void)
++{
++    int self;
++    if (!pw_cs_mode) return;
++    self = get_thread_data() == __atomic_load_n(&pw_cs_target, __ATOMIC_ACQUIRE);
++    if (self) __atomic_store_n(&pw_cs_stop, 1, __ATOMIC_RELEASE);
++    if ((self || __atomic_load_n(&pw_cs_done, __ATOMIC_ACQUIRE)) &&
++        __atomic_exchange_n(&pw_cs_joinable, 0, __ATOMIC_ACQ_REL)) pthread_join(pw_cs_worker, NULL);
++}
++
++/* SIGQUIT may reach abort_thread while still on its signal stack. Never join
++ * there. A terminated JOINABLE pthread remains a valid identity until reaped;
++ * the sole existing NTDLL reaper below waits for the sender before that join. */
++void pw_cs_sampler_abort(void)
++{
++    /* Conservatively stop on ANY forced thread abort. This avoids even an
++     * extra pthread_getspecific call on a possible SIGQUIT signal stack. */
++    if (!pw_cs_mode) return;
++    __atomic_store_n(&pw_cs_abort_seen, 1, __ATOMIC_RELEASE);
++    __atomic_store_n(&pw_cs_stop, 1, __ATOMIC_RELEASE);
++    __atomic_store_n(&pw_cs_ring.active, 0, __ATOMIC_RELEASE);
++}
++
++void pw_cs_sampler_before_reap(struct thread_data *data)
++{
++    if (!pw_cs_mode || data != __atomic_load_n(&pw_cs_target, __ATOMIC_ACQUIRE)) return;
++    __atomic_store_n(&pw_cs_stop, 1, __ATOMIC_RELEASE);
++    if (__atomic_exchange_n(&pw_cs_joinable, 0, __ATOMIC_ACQ_REL)) pthread_join(pw_cs_worker, NULL);
++    /* Only now may normal exit_thread join/free the selected target. */
++}
++#endif

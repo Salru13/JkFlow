@@ -1,0 +1,47 @@
+JkFlow for PS4: where the source is
+===================================
+
+Wine and the Wine PS4 runtime (with our changes) and the JkFlow launcher are
+licensed under the GNU Lesser General Public License 2.1 or later
+(LICENSES/LGPL-2.1.txt).
+
+The complete corresponding source of the Wine runtime with our changes and
+of the launcher, for the versions in this package, is published at the
+project's release repository, at the tag of this release:
+
+Source: https://github.com/Salru13/JkFlow (tag v1.00)
+
+What it is built from
+---------------------
+
+Wine
+  Upstream:  https://gitlab.winehq.org/wine/wine
+  Base:      Wine 11.17, commit 490f6d5dcb (2026-09-07)
+  Changes:   the Wine console-port trees below, plus this project's own
+             patches (ntdll "override260", dsound "R3").
+
+Wine console ports this runtime is based on (upstream repositories)
+  https://github.com/mpereiraesaa/prospero-win
+  https://github.com/plastikman/prospero-win
+  https://github.com/plastikman/orbis-win
+
+DXVK (zlib/libpng, LICENSES/DXVK-zlib.txt)
+  Upstream:  https://github.com/doitsujin/dxvk
+  Base:      v1.10.3 (commit e4fd5e9, 2022-08-02)
+  Changes:   d3d9.c988.dll (LUT/colour fix and the native client) and
+             dxvknative.prx (the native renderer) are built from this base
+             with this project's patches.
+
+Mesa / RADV (MIT, LICENSES/Mesa-MIT.txt)
+  Upstream:  https://gitlab.freedesktop.org/mesa/mesa
+  Base:      26.3.0-devel
+  Changes:   the PS4 window-system and flip-rate patches in libvulkan.prx.
+
+FreeType (FTL, LICENSES/FreeType-FTL.txt) and the LLVM runtime
+(Apache-2.0 with the LLVM exception,
+LICENSES/LLVM-Apache-2.0-with-LLVM-exception.txt): unchanged upstream code.
+
+JkFlow launcher: LGPL-2.1-or-later, Copyright (c) 2026 XxXJoker13XxX and
+contributors (see LICENSE). The V7 and S7 DLLs and our changes in the native
+client are separate files: Copyright (c) 2026 XxXJoker13XxX. All rights
+reserved (see LICENSE).

@@ -1,0 +1,365 @@
+Mesa / RADV 26.3.0-devel (sce_module/libvulkan.prx): code compiled into the driver
+that is not under Mesa's MIT licence. Each notice is copied from the Mesa source
+tree the driver was built from (or, for BLAKE3, from the upstream tag Mesa names);
+the files it covers are listed with it.
+
+==============================================================================
+xxHash (BSD-2-Clause): src/util/xxhash.h
+From: Mesa src/util/xxhash.h
+==============================================================================
+
+/*
+ * xxHash - Extremely Fast Hash algorithm
+ * Header File
+ * Copyright (C) 2012-2023 Yann Collet
+ *
+ * BSD 2-Clause License (https://www.opensource.org/licenses/bsd-license.php)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *    * Redistributions of source code must retain the above copyright
+ *      notice, this list of conditions and the following disclaimer.
+ *    * Redistributions in binary form must reproduce the above
+ *      copyright notice, this list of conditions and the following disclaimer
+ *      in the documentation and/or other materials provided with the
+ *      distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * You can contact the author at:
+ *   - xxHash homepage: https://www.xxhash.com
+ *   - xxHash source repository: https://github.com/Cyan4973/xxHash
+ */
+
+==============================================================================
+Berkeley SoftFloat Release 3e (BSD-3-Clause): src/util/softfloat.c, src/util/softfloat.h
+From: Mesa src/util/softfloat.c
+==============================================================================
+
+/*
+ * License for Berkeley SoftFloat Release 3e
+ *
+ * John R. Hauser
+ * 2018 January 20
+ *
+ * The following applies to the whole of SoftFloat Release 3e as well as to
+ * each source file individually.
+ *
+ * Copyright 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018 The Regents of the
+ * University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions, and the following disclaimer.
+ *
+ *  2. Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions, and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ *
+ *  3. Neither the name of the University nor the names of its contributors
+ *     may be used to endorse or promote products derived from this software
+ *     without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS "AS IS", AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, ARE
+ * DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *
+ * The functions listed in this file are modified versions of the ones
+ * from the Berkeley SoftFloat 3e Library.
+ *
+ * Their implementation correctness has been checked with the Berkeley
+ * TestFloat Release 3e tool for x86_64.
+ */
+
+==============================================================================
+Fuchsia radix sort (BSD-style): src/vulkan/runtime/radix_sort/common/macros.h, src/vulkan/runtime/radix_sort/common/util.c, src/vulkan/runtime/radix_sort/common/util.h, src/vulkan/runtime/radix_sort/common/vk/barrier.c, src/vulkan/runtime/radix_sort/common/vk/barrier.h, src/vulkan/runtime/radix_sort/radix_sort_u64.c, src/vulkan/runtime/radix_sort/radix_sort_u64.h, src/vulkan/runtime/radix_sort/radix_sort_u96.c, src/vulkan/runtime/radix_sort/radix_sort_u96.h, src/vulkan/runtime/radix_sort/radix_sort_vk.c, src/vulkan/runtime/radix_sort/radix_sort_vk.h, src/vulkan/runtime/radix_sort/radix_sort_vk_devaddr.h, src/vulkan/runtime/radix_sort/shaders/config.h, src/vulkan/runtime/radix_sort/shaders/push.h, src/vulkan/runtime/radix_sort/target.h
+From: Mesa src/vulkan/runtime/radix_sort/radix_sort_vk.c (first lines) and radix_sort/LICENSE
+==============================================================================
+
+// Copyright 2021 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+Copyright 2019 The Fuchsia Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
+C11 threads emulation (BSL-1.0): src/c11/impl/threads_posix.c, src/c11/impl/time.c, src/c11/threads.h
+From: Mesa src/c11/impl/threads_posix.c and licenses/BSL-1.0
+==============================================================================
+
+/*
+ * SPDX-License-Identifier: BSL-1.0
+ * Copyright yohhoy 2012.
+ */
+
+Valid-License-Identifier: BSL-1.0
+SPDX-URL: https://spdx.org/licenses/BSL-1.0.html
+Usage-Guide:
+  To use the BSL-1.0 License put the following SPDX tag/value pair into a
+  comment according to the placement guidelines in the licensing rules
+  documentation:
+    SPDX-License-Identifier: BSL-1.0
+License-Text:
+
+Boost Software License - Version 1.0 - August 17th, 2003
+
+Permission is hereby granted, free of charge, to any person or organization obtaining a copy of the software and accompanying documentation covered by this license (the "Software") to use, reproduce, display, distribute, execute, and transmit the Software, and to prepare derivative works of the Software, and to permit third-parties to whom the Software is furnished to do so, all subject to the following:
+
+The copyright notices in the Software and this entire statement, including the above license grant, this restriction and the following disclaimer, must be included in all copies of the Software, in whole or in part, and all derivative works of the Software, unless such copies or derivative works are solely in the form of machine-executable object code generated by a source language processor.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+zlib 1.3.1 (Mesa meson subproject, statically linked): subprojects/zlib-1.3.1/compress.c, subprojects/zlib-1.3.1/crc32.c, subprojects/zlib-1.3.1/crc32.h, subprojects/zlib-1.3.1/zconf.h, subprojects/zlib-1.3.1/zlib.h, subprojects/zlib-1.3.1/zutil.h
+From: Mesa subprojects/zlib-1.3.1/zlib.h
+==============================================================================
+
+/* zlib.h -- interface of the 'zlib' general purpose compression library
+  version 1.3.1, January 22nd, 2024
+
+  Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+
+
+  The data format used by the zlib library is described by RFCs (Request for
+  Comments) 1950 to 1952 in the files http://tools.ietf.org/html/rfc1950
+  (zlib format), rfc1951 (deflate format) and rfc1952 (gzip format).
+*/
+
+==============================================================================
+BLAKE3 1.8.2: src/util/blake3/blake3.c, src/util/blake3/blake3.h, src/util/blake3/blake3_avx2_x86-64_unix.S, src/util/blake3/blake3_avx512_x86-64_unix.S, src/util/blake3/blake3_dispatch.c, src/util/blake3/blake3_impl.h, src/util/blake3/blake3_portable.c, src/util/blake3/blake3_sse2_x86-64_unix.S, src/util/blake3/blake3_sse41_x86-64_unix.S, src/util/blake3/mesa_blake3_visibility.h
+From: https://github.com/BLAKE3-team/BLAKE3/tree/1.8.2 (LICENSE_CC0, LICENSE_A2; Mesa's src/util/blake3/README names tag 1.8.2, and Mesa's copy has no licence file)
+==============================================================================
+
+BLAKE3 is offered under CC0 1.0, or the Apache License 2.0, or the Apache
+License 2.0 with LLVM exceptions (upstream LICENSE_CC0, LICENSE_A2,
+LICENSE_A2LLVM). Upstream LICENSE_A2 line 190 reads:
+   Copyright 2019 Jack O'Connor and Samuel Neves
+The Apache-2.0 text is Apache-2.0.txt; the CC0 1.0 text follows.
+
+Creative Commons Legal Code
+
+CC0 1.0 Universal
+
+    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
+    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
+    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
+    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
+    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
+    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
+    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
+    HEREUNDER.
+
+Statement of Purpose
+
+The laws of most jurisdictions throughout the world automatically confer
+exclusive Copyright and Related Rights (defined below) upon the creator
+and subsequent owner(s) (each and all, an "owner") of an original work of
+authorship and/or a database (each, a "Work").
+
+Certain owners wish to permanently relinquish those rights to a Work for
+the purpose of contributing to a commons of creative, cultural and
+scientific works ("Commons") that the public can reliably and without fear
+of later claims of infringement build upon, modify, incorporate in other
+works, reuse and redistribute as freely as possible in any form whatsoever
+and for any purposes, including without limitation commercial purposes.
+These owners may contribute to the Commons to promote the ideal of a free
+culture and the further production of creative, cultural and scientific
+works, or to gain reputation or greater distribution for their Work in
+part through the use and efforts of others.
+
+For these and/or other purposes and motivations, and without any
+expectation of additional consideration or compensation, the person
+associating CC0 with a Work (the "Affirmer"), to the extent that he or she
+is an owner of Copyright and Related Rights in the Work, voluntarily
+elects to apply CC0 to the Work and publicly distribute the Work under its
+terms, with knowledge of his or her Copyright and Related Rights in the
+Work and the meaning and intended legal effect of CC0 on those rights.
+
+1. Copyright and Related Rights. A Work made available under CC0 may be
+protected by copyright and related or neighboring rights ("Copyright and
+Related Rights"). Copyright and Related Rights include, but are not
+limited to, the following:
+
+  i. the right to reproduce, adapt, distribute, perform, display,
+     communicate, and translate a Work;
+ ii. moral rights retained by the original author(s) and/or performer(s);
+iii. publicity and privacy rights pertaining to a person's image or
+     likeness depicted in a Work;
+ iv. rights protecting against unfair competition in regards to a Work,
+     subject to the limitations in paragraph 4(a), below;
+  v. rights protecting the extraction, dissemination, use and reuse of data
+     in a Work;
+ vi. database rights (such as those arising under Directive 96/9/EC of the
+     European Parliament and of the Council of 11 March 1996 on the legal
+     protection of databases, and under any national implementation
+     thereof, including any amended or successor version of such
+     directive); and
+vii. other similar, equivalent or corresponding rights throughout the
+     world based on applicable law or treaty, and any national
+     implementations thereof.
+
+2. Waiver. To the greatest extent permitted by, but not in contravention
+of, applicable law, Affirmer hereby overtly, fully, permanently,
+irrevocably and unconditionally waives, abandons, and surrenders all of
+Affirmer's Copyright and Related Rights and associated claims and causes
+of action, whether now known or unknown (including existing as well as
+future claims and causes of action), in the Work (i) in all territories
+worldwide, (ii) for the maximum duration provided by applicable law or
+treaty (including future time extensions), (iii) in any current or future
+medium and for any number of copies, and (iv) for any purpose whatsoever,
+including without limitation commercial, advertising or promotional
+purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
+member of the public at large and to the detriment of Affirmer's heirs and
+successors, fully intending that such Waiver shall not be subject to
+revocation, rescission, cancellation, termination, or any other legal or
+equitable action to disrupt the quiet enjoyment of the Work by the public
+as contemplated by Affirmer's express Statement of Purpose.
+
+3. Public License Fallback. Should any part of the Waiver for any reason
+be judged legally invalid or ineffective under applicable law, then the
+Waiver shall be preserved to the maximum extent permitted taking into
+account Affirmer's express Statement of Purpose. In addition, to the
+extent the Waiver is so judged Affirmer hereby grants to each affected
+person a royalty-free, non transferable, non sublicensable, non exclusive,
+irrevocable and unconditional license to exercise Affirmer's Copyright and
+Related Rights in the Work (i) in all territories worldwide, (ii) for the
+maximum duration provided by applicable law or treaty (including future
+time extensions), (iii) in any current or future medium and for any number
+of copies, and (iv) for any purpose whatsoever, including without
+limitation commercial, advertising or promotional purposes (the
+"License"). The License shall be deemed effective as of the date CC0 was
+applied by Affirmer to the Work. Should any part of the License for any
+reason be judged legally invalid or ineffective under applicable law, such
+partial invalidity or ineffectiveness shall not invalidate the remainder
+of the License, and in such case Affirmer hereby affirms that he or she
+will not (i) exercise any of his or her remaining Copyright and Related
+Rights in the Work or (ii) assert any associated claims and causes of
+action with respect to the Work, in either case contrary to Affirmer's
+express Statement of Purpose.
+
+4. Limitations and Disclaimers.
+
+ a. No trademark or patent rights held by Affirmer are waived, abandoned,
+    surrendered, licensed or otherwise affected by this document.
+ b. Affirmer offers the Work as-is and makes no representations or
+    warranties of any kind concerning the Work, express, implied,
+    statutory or otherwise, including without limitation warranties of
+    title, merchantability, fitness for a particular purpose, non
+    infringement, or the absence of latent or other defects, accuracy, or
+    the present or absence of errors, whether or not discoverable, all to
+    the greatest extent permissible under applicable law.
+ c. Affirmer disclaims responsibility for clearing rights of other persons
+    that may apply to the Work or any use thereof, including without
+    limitation any person's Copyright and Related Rights in the Work.
+    Further, Affirmer disclaims responsibility for obtaining any necessary
+    consents, permissions or other rights required for any use of the
+    Work.
+ d. Affirmer understands and acknowledges that Creative Commons is not a
+    party to this document and has no duty or obligation with respect to
+    this CC0 or use of the Work.
+
+==============================================================================
+Khronos headers under Apache-2.0 (full text: Apache-2.0.txt): include/GLES/glplatform.h, include/GLES2/gl2platform.h, include/GLES3/gl3platform.h
+From: Mesa include/ (each file's own header lines)
+==============================================================================
+
+include/GLES/glplatform.h: ** Copyright 2017-2020 The Khronos Group Inc.
+include/GLES/glplatform.h: ** SPDX-License-Identifier: Apache-2.0
+include/GLES2/gl2platform.h: ** Copyright 2017-2020 The Khronos Group Inc.
+include/GLES2/gl2platform.h: ** SPDX-License-Identifier: Apache-2.0
+include/GLES3/gl3platform.h: ** Copyright 2017-2020 The Khronos Group Inc.
+include/GLES3/gl3platform.h: ** SPDX-License-Identifier: Apache-2.0
+
+==============================================================================
+Android header, Apache-2.0 (full text: Apache-2.0.txt): include/vulkan/vk_android_native_buffer.h
+From: Mesa include/vulkan/vk_android_native_buffer.h, lines 35-47
+==============================================================================
+
+ * Copyright 2015 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+
+==============================================================================
+OpenGL ES 3 extension header, SGI Free Software License B 2.0 (header only): include/GLES3/gl3ext.h
+From: Mesa include/GLES3/gl3ext.h, lines 6-9 (the licence allows this reference in place of its text)
+==============================================================================
+
+/*
+ * This document is licensed under the SGI Free Software B License Version
+ * 2.0. For details, see http://oss.sgi.com/projects/FreeB/ .
+ */
+

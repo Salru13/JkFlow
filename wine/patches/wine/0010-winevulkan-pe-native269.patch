@@ -1,0 +1,160 @@
+JkFlow 1.00 Wine PS4 runtime: winevulkan PE (x86_64 winevulkan.dll): native269 batch encoder
+
+x86_64-windows/winevulkan.dll was built at this state.
+
+ dlls/winevulkan/pw_vk_batch_pe.c
+---
+diff --git a/dlls/winevulkan/pw_vk_batch_pe.c b/dlls/winevulkan/pw_vk_batch_pe.c
+--- a/dlls/winevulkan/pw_vk_batch_pe.c
++++ b/dlls/winevulkan/pw_vk_batch_pe.c
+@@ -25,10 +25,61 @@
+ static struct pw_vk_spsc_sequence stream_sequence;
+ static uint64_t next_replay=1;
+ static LONG quiescing;
++/* Detach is rare; a flush need not lock/scan the registry without retirement.
++ * Set after retired is published. The drain owns removal and re-arms the hint
++ * for a retired stream whose ordered records have not been consumed yet. */
++static LONG retired_hint;
+ static struct pw_vk_template_cache templates;
+ static struct pw_vk_retirement retirement;
+ static unsigned char *scratch;
+ static BOOL enabled,stats_enabled;
++/* Native269: opt-in query-only diagnostics. All Vulkan ordering is unchanged.
++ * QPC intervals are elapsed host ticks, not CPU/GPU time. No query-data reads. */
++static BOOL query_profile;
++static CRITICAL_SECTION query_profile_gate;
++static LARGE_INTEGER query_frequency;
++struct pw269_query_stats {
++ UINT64 calls,poll,wait,nonempty,records,dispatches,max_records;
++ UINT64 gate_ticks,drain_ticks,poll_drain_ticks,wait_drain_ticks,raw_ticks,max_drain_ticks;
++ UINT64 success,not_ready,vk_error,unix_error,bad_clock;
++};
++static struct pw269_query_stats query_stats;
++static UINT64 query_tick(void)
++{
++ LARGE_INTEGER now;
++ return QueryPerformanceCounter(&now)&&now.QuadPart>0?(UINT64)now.QuadPart:0;
++}
++static void query_account(VkQueryResultFlags flags,NTSTATUS status,VkResult result,
++                         UINT64 begin,UINT64 gated,UINT64 drained,UINT64 returned,
++                         UINT64 records,UINT64 dispatches)
++{
++ struct pw269_query_stats copy;BOOL emit;
++ EnterCriticalSection(&query_profile_gate);
++ query_stats.calls++;
++ if(flags&VK_QUERY_RESULT_WAIT_BIT)query_stats.wait++;else query_stats.poll++;
++ query_stats.nonempty+=records!=0;query_stats.records+=records;query_stats.dispatches+=dispatches;
++ if(records>query_stats.max_records)query_stats.max_records=records;
++ if(status)query_stats.unix_error++;
++ else if(result==VK_SUCCESS)query_stats.success++;
++ else if(result==VK_NOT_READY)query_stats.not_ready++;
++ else query_stats.vk_error++;
++ if(!begin||gated<begin||drained<gated||returned<drained)query_stats.bad_clock++;
++ else{
++  query_stats.gate_ticks+=gated-begin;query_stats.drain_ticks+=drained-gated;
++  query_stats.raw_ticks+=returned-drained;
++  if(flags&VK_QUERY_RESULT_WAIT_BIT)query_stats.wait_drain_ticks+=drained-gated;
++  else query_stats.poll_drain_ticks+=drained-gated;
++  if(drained-gated>query_stats.max_drain_ticks)query_stats.max_drain_ticks=drained-gated;
++ }
++ emit=!(query_stats.calls%2048);
++ if(emit)copy=query_stats;
++ LeaveCriticalSection(&query_profile_gate);
++ if(emit)WINE_MESSAGE("PW_VK_QUERY_DRAIN version=1 scope=batched_query_progress cumulative=1 calls=%llu poll=%llu wait=%llu nonempty=%llu records=%llu dispatches=%llu max_records=%llu success=%llu not_ready=%llu vk_error=%llu unix_error=%llu gate_ticks=%llu drain_ticks=%llu poll_drain_ticks=%llu wait_drain_ticks=%llu raw_ticks=%llu max_drain_ticks=%llu bad_clock=%llu frequency=%llu\n",
++  copy.calls,copy.poll,copy.wait,copy.nonempty,copy.records,copy.dispatches,copy.max_records,
++  copy.success,copy.not_ready,copy.vk_error,copy.unix_error,copy.gate_ticks,copy.drain_ticks,
++  copy.poll_drain_ticks,copy.wait_drain_ticks,copy.raw_ticks,copy.max_drain_ticks,copy.bad_clock,(UINT64)query_frequency.QuadPart);
++}
++
+ static _Atomic int negotiated,async_backend;
+ /* Task247: a Unix library answering only the v1 name still batches the seven
+  * fast opcodes with version-1 framing; generated records stay synchronous. */
+@@ -82,6 +133,11 @@
+ static BOOL CALLBACK initialize(INIT_ONCE *o,void *p,void **ctx)
+ {
+  char env[8];(void)o;(void)p;(void)ctx;
++ query_profile=GetEnvironmentVariableA("PW_VK_QUERY_PROFILE",env,sizeof(env))==1&&env[0]=='1';
++ if(query_profile){
++  query_profile=QueryPerformanceFrequency(&query_frequency)&&query_frequency.QuadPart>0;
++  if(query_profile)InitializeCriticalSection(&query_profile_gate);
++ }
+  stats_enabled=GetEnvironmentVariableA("PW_VK_BATCH_STATS",env,sizeof(env))==1&&env[0]=='1';
+  fallback_profile=stats_enabled&&GetEnvironmentVariableA("PW_VK_BATCH_FALLBACK_PROFILE",env,sizeof(env))==1&&env[0]=='1';
+  enabled=GetEnvironmentVariableA("PW_VK_BATCH",env,sizeof(env))==1&&env[0]=='1'&&!pw_vk_stream_environment_unsafe();
+@@ -116,12 +172,16 @@
+ static void reclaim(void)
+ {
+  struct producer **link,*p;
++ if(!InterlockedExchange(&retired_hint,0))return;
+  EnterCriticalSection(&registry_gate);
+  for(link=&registry.streams;(p=*link);){
+   if(InterlockedCompareExchange(&p->retired,0,0)&&
+      atomic_load_explicit(&p->stream.read,memory_order_relaxed)==atomic_load_explicit(&p->stream.write,memory_order_acquire)){
+    *link=p->next;heap_free(p);
+-  }else link=&p->next;
++  }else{
++   if(InterlockedCompareExchange(&p->retired,0,0))InterlockedExchange(&retired_hint,1);
++   link=&p->next;
++  }
+  }
+  LeaveCriticalSection(&registry_gate);
+ }
+@@ -157,10 +217,14 @@
+ static BOOL collect(size_t *bytes,size_t *records)
+ {
+  struct producer *list[PW_VK_BATCH_SCRATCH/PW_VK_BATCH_ARENA];
+- uint64_t marker=pw_vk_spsc_marker(&stream_sequence);size_t n=producers(list),i;
++ uint64_t marker=pw_vk_spsc_marker(&stream_sequence);size_t n,i;
+  size_t limit=pw247_batch_limit(backend_kind);
+  unsigned spins=0;DWORD start=0;BOOL reported=FALSE;
+  *bytes=*records=0;
++ /* The marker is still sampled before the registry snapshot. Tickets issued
++  * after this sample belong to the next prefix, including on this fast path. */
++ if(next_replay>marker){enqueued_total=marker;return TRUE;}
++ n=producers(list);
+  while(next_replay<=marker){
+   BOOL found=FALSE;
+   if(pw247_should_split(backend_kind,0,*bytes,limit-*bytes,PW_VK_STREAM_HEADER)){enqueued_total=next_replay-1;return FALSE;}
+@@ -191,7 +255,7 @@
+ void pw_vk_batch_thread_detach(void)
+ {
+  struct producer *p;if(tls==TLS_OUT_OF_INDEXES)return;p=TlsGetValue(tls);
+- if(p){/* No mutex or driver call under the loader lock. */TlsSetValue(tls,NULL);InterlockedExchange(&p->retired,1);}
++ if(p){/* No mutex or driver call under the loader lock. */TlsSetValue(tls,NULL);InterlockedExchange(&p->retired,1);InterlockedExchange(&retired_hint,1);}
+ }
+ static NTSTATUS raw_call(unsigned int code,void *args){if(stats_enabled)InterlockedIncrement64((LONG64 *)&crossings_total);return pw_vk_present_call(code,args);}
+ static NTSTATUS flush_call(unsigned int code,void *args)
+@@ -414,6 +478,7 @@
+ NTSTATUS pw_vk_batch_call(unsigned int code,void *args)
+ {
+  unsigned char *wire;size_t bytes;uint32_t opcode;struct producer *p;NTSTATUS status;int appended;BOOL deferred;
++ UINT64 query_begin=0;
+  InitOnceExecuteOnce(&once,initialize,NULL,NULL);
+  /* Init and availability calls precede capability negotiation; old Unix never
+   * receives the new table index. Disabled64 builds retain original macro. */
+@@ -457,6 +522,7 @@
+   }else{InterlockedExchange(&p->publishing,0);if(deferred)ReleaseSRWLockShared(&mapping_lock);}
+  }else if(deferred)ReleaseSRWLockShared(&mapping_lock);
+ synchronous:
++ if(query_profile&&code==unix_vkGetQueryPoolResults)query_begin=query_tick();
+  enter();
+  if(InterlockedCompareExchange(&sticky_disabled,0,0)){leave();status=raw_call(code,args);snapshot(code,args);return status;}
+  if(pw_vk_stream_call_unsafe(code,args)||pw_vk_batch_allocator(code,args)){
+@@ -473,6 +539,17 @@
+    * the referenced lanes in raw submit/lifecycle hooks. Never run a blocking
+    * driver wait, or a pipeline compile, while holding the PE gate or
+    * retaining shared scratch. */
++  if(query_profile&&code==unix_vkGetQueryPoolResults){
++   struct vkGetQueryPoolResults_params *q=args;
++   UINT64 gated=query_tick(),before=records_total,dispatches=dispatches_total,drained,returned,records;
++   if(negotiated)flush_call(async_backend?unix_count+1:unix_count,NULL);
++   records=records_total-before;dispatches=dispatches_total-dispatches;drained=query_tick();
++   leave();status=raw_call(code,args);returned=query_tick();
++   /* Failed Unix calls do not promise an initialized VkResult. Never read it. */
++   query_account(q->flags,status,status?VK_ERROR_UNKNOWN:q->result,
++                 query_begin,gated,drained,returned,records,dispatches);
++   return status;
++  }
+   if(negotiated)flush_call(async_backend?unix_count+1:unix_count,NULL);
+   leave();status=raw_call(code,args);
+   /* All other progress operations have no cache/lifetime posthooks. Present

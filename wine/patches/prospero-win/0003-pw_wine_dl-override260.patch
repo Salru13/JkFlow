@@ -1,0 +1,35 @@
+JkFlow 1.00 Wine PS4 runtime: ntdll Unix-module loader: optional module override folder (override260)
+
+The JkFlow 1.00 build compiles it with -DPW_WINE_DL_OVERRIDE_DIR="/data/blurdev/override"; the post-link step paths7 then makes that folder unopenable (BUILD.md).
+
+ wine/ps5/pw_wine_dl.c
+---
+diff --git a/wine/ps5/pw_wine_dl.c b/wine/ps5/pw_wine_dl.c
+--- a/wine/ps5/pw_wine_dl.c
++++ b/wine/ps5/pw_wine_dl.c
+@@ -3,6 +3,10 @@
+ #include "pw_wine_prx.h"
+ #include <pthread.h>
+ #include <string.h>
++#include <sys/stat.h>
++#ifndef PW_WINE_DL_OVERRIDE_DIR
++#define PW_WINE_DL_OVERRIDE_DIR "/data/prospero-win/override"
++#endif
+ 
+ typedef struct Module {
+     char path[PW_WINE_DL_MAX_PATH];
+@@ -120,10 +124,13 @@
+     if(loaded==PW_WINE_DL_MAX_MODULES){set_error("too many modules");return NULL;}
+     char candidate[PW_WINE_DL_MAX_PATH],directory[PW_WINE_DL_MAX_PATH];int32_t handle=-1;
+     int bare=!strchr(path,'/');
++    /* A module placed in the override directory wins; an absent one costs one stat. */
++    {struct stat st;
++     if(prx_path(path,PW_WINE_DL_OVERRIDE_DIR,candidate) && !stat(candidate,&st))handle=try_load(candidate);}
+     /* A bare name is never tried as given (the console refuses relative
+      * paths): the module dir first, then beside every module already loaded
+      * or adopted, as a library's RPATH finds a sibling. */
+-    if(!bare && prx_path(path,NULL,candidate))handle=try_load(candidate);
++    if(handle<0 && !bare && prx_path(path,NULL,candidate))handle=try_load(candidate);
+     if(handle<0 && module_dir[0] && prx_path(path,module_dir,candidate))handle=try_load(candidate);
+     for(uint32_t i=0;bare && handle<0 && i<loaded;i++)
+         if(directory_of(modules[order[i]].path,directory) && strcmp(directory,module_dir) &&

@@ -1,0 +1,901 @@
+JkFlow 1.00 Wine PS4 runtime: dsound (i386 dsound.dll): R3 buffer/mixer changes
+
+
+ dlls/dsound/Makefile.in
+ dlls/dsound/buffer.c
+ dlls/dsound/dsound_main.c
+ dlls/dsound/dsound_private.h
+ dlls/dsound/mixer.c
+ dlls/dsound/pw259_dsound_obs.c
+ dlls/dsound/pw259_dsound_obs.h
+---
+diff --git a/dlls/dsound/Makefile.in b/dlls/dsound/Makefile.in
+--- a/dlls/dsound/Makefile.in
++++ b/dlls/dsound/Makefile.in
+@@ -16,5 +16,6 @@
+ 	duplex.c \
+ 	mixer.c \
+ 	primary.c \
++	pw259_dsound_obs.c \
+ 	propset.c \
+ 	sound3d.c
+diff --git a/dlls/dsound/buffer.c b/dlls/dsound/buffer.c
+--- a/dlls/dsound/buffer.c
++++ b/dlls/dsound/buffer.c
+@@ -32,6 +32,8 @@
+ #include "dsound.h"
+ #include "dsound_private.h"
+ #include "dsconf.h"
++#include "ks.h"
++#include "ksmedia.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(dsound);
+ 
+@@ -318,6 +320,8 @@
+ 	This->playflags = flags;
+ 	if (This->state == STATE_STOPPED) {
+ 		This->state = STATE_STARTING;
++		if (This->pw259)
++			pw259_ds_play(This->pw259, This->sec_mixpos, (flags & DSBPLAY_LOOPING) != 0);
+ 	}
+ 
+ 	for (i = 0; i < This->num_filters; i++) {
+@@ -344,6 +348,8 @@
+ 		This->use_committed = FALSE;
+ 		This->committed_mixpos = 0;
+ 		DSOUND_CheckEvent(This, 0, 0);
++		if (This->pw259)
++			pw259_ds_stop(This->pw259);
+ 	}
+ 
+ 	ReleaseSRWLockExclusive(&This->lock);
+@@ -417,6 +423,9 @@
+ 
+ 	ReleaseSRWLockShared(&This->lock);
+ 
++	if (This->pw259)
++		pw259_ds_position(This->pw259);
++
+ 	TRACE("playpos = %ld, writepos = %ld, buflen=%ld (%p, time=%lu)\n",
+ 		playpos?*playpos:-1, writepos?*writepos:-1, This->buflen, This, GetTickCount());
+ 
+@@ -532,6 +541,12 @@
+ 
+ 	AcquireSRWLockShared(&This->lock);
+ 
++        /* Register before commit_next_chunk reads PCM. The dsb lock is shared;
++         * observer exclusion waits for an in-flight clear, then the outstanding
++         * writer count forbids another clear until Unlock commits. */
++	if (This->pw259)
++		pw259_ds_lock(This->pw259, writebytes);
++
+ 	if (writecursor+writebytes <= This->buflen) {
+ 		*(LPBYTE*)lplpaudioptr1 = This->buffer->memory+writecursor;
+ 		if (This->sec_mixpos >= writecursor && This->sec_mixpos < writecursor + writebytes && This->state == STATE_PLAYING) {
+@@ -569,6 +584,7 @@
+ 
+ 	ReleaseSRWLockShared(&This->lock);
+ 
++
+ 	return DS_OK;
+ }
+ 
+@@ -593,6 +609,9 @@
+ 	This->use_committed = FALSE;
+ 	This->committed_mixpos = 0;
+ 
++	if (This->pw259)
++		pw259_ds_setpos(This->pw259, newpos);
++
+ 	/* at this point, do not attempt to reset buffers, mess with primary mix position,
+            or anything like that to reduce latency. The data already prebuffered cannot be changed */
+ 
+@@ -664,7 +683,11 @@
+ 
+ 	if((p1 && ((BYTE*)p1 < This->buffer->memory || (BYTE*)p1 >= This->buffer->memory + This->buflen)) ||
+ 	   (p2 && ((BYTE*)p2 < This->buffer->memory || (BYTE*)p2 >= This->buffer->memory + This->buflen)))
++	{
++		if (This->pw259)
++			pw259_ds_unlock(This->pw259, 0, 0, 0, 0, FALSE);
+ 		return DSERR_INVALIDPARAM;
++	}
+ 
+ 	if (x1 || x2)
+ 	{
+@@ -692,6 +715,12 @@
+ 		ReleaseSRWLockShared(&This->device->buffer_list_lock);
+ 	}
+ 
++	if (This->pw259)
++		pw259_ds_unlock(This->pw259,
++				p1 ? (DWORD)((BYTE*)p1 - This->buffer->memory) : 0, p1 ? x1 : 0,
++				p2 ? (DWORD)((BYTE*)p2 - This->buffer->memory) : 0, p2 ? x2 : 0,
++				hres == DS_OK);
++
+ 	return hres;
+ }
+ 
+@@ -1030,6 +1059,20 @@
+ 	IDirectSoundBufferImpl_GetObjectInPath
+ };
+ 
++/* Only signed integer PCM16 has the zero-silence contract used by CLEAR.
++ * An EXTENSIBLE format tag alone does not identify the sample subtype. */
++static WORD pw286_movie_pcm_tag(const WAVEFORMATEX *fmt)
++{
++    const WAVEFORMATEXTENSIBLE *ext = (const WAVEFORMATEXTENSIBLE *)fmt;
++    if (fmt->wFormatTag == WAVE_FORMAT_PCM) return WAVE_FORMAT_PCM;
++    if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE
++            && fmt->cbSize >= sizeof(*ext) - sizeof(*fmt)
++            && (!ext->Samples.wValidBitsPerSample || ext->Samples.wValidBitsPerSample == 16)
++            && IsEqualGUID(&ext->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))
++        return WAVE_FORMAT_PCM;
++    return 0;
++}
++
+ HRESULT secondarybuffer_create(DirectSoundDevice *device, const DSBUFFERDESC *dsbd,
+         IDirectSoundBuffer **buffer)
+ {
+@@ -1151,6 +1194,9 @@
+ 
+         InitializeSRWLock(&dsb->lock);
+ 
++        dsb->pw259 = pw259_ds_create(dsb->dsbd.dwFlags, pw286_movie_pcm_tag(wfex), wfex->wBitsPerSample, wfex->nChannels,
++                wfex->nBlockAlign, wfex->nSamplesPerSec, dsb->buflen, FALSE);
++
+         /* register buffer */
+         err = DirectSoundDevice_AddBuffer(device, dsb);
+         if (err == DS_OK)
+@@ -1173,6 +1219,9 @@
+ 
+     DirectSoundDevice_RemoveBuffer(This->device, This);
+ 
++    if (This->pw259)
++        pw259_ds_destroy(This->pw259);
++
+     This->buffer->ref--;
+     list_remove(&This->entry);
+     if (This->buffer->ref == 0)
+@@ -1234,11 +1283,15 @@
+     AcquireSRWLockShared(&pdsb->lock);
+ 
+     CopyMemory(dsb, pdsb, sizeof(*dsb));
++    dsb->pw259 = NULL;
+ 
+     dsb->pwfx = DSOUND_CopyFormat(pdsb->pwfx);
+ 
+     ReleaseSRWLockShared(&pdsb->lock);
+ 
++    if (pdsb->pw259)
++        pw259_ds_duplicated(pdsb->pw259);
++
+     if (dsb->pwfx == NULL) {
+         free(committedbuff);
+         free(dsb);
+diff --git a/dlls/dsound/dsound_main.c b/dlls/dsound/dsound_main.c
+--- a/dlls/dsound/dsound_main.c
++++ b/dlls/dsound/dsound_main.c
+@@ -774,6 +774,7 @@
+ 
+     switch (fdwReason) {
+     case DLL_PROCESS_ATTACH:
++        pw259_ds_configure();
+         DisableThreadLibraryCalls(hInstDLL);
+         /* Increase refcount on dsound by 1 */
+         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCWSTR)hInstDLL, &hInstDLL);
+diff --git a/dlls/dsound/dsound_private.h b/dlls/dsound/dsound_private.h
+--- a/dlls/dsound/dsound_private.h
++++ b/dlls/dsound/dsound_private.h
+@@ -165,9 +165,28 @@
+     int                         num_filters;
+     DSFilter*                   filters;
+ 
++    struct pw259_ds_slot       *pw259; /* task 259; NULL unless observed */
++
+     struct list entry;
+ };
+ 
++void pw259_ds_configure(void);
++void pw259_ds_mix_begin(struct pw259_ds_slot *slot);
++void pw259_ds_mix_end(struct pw259_ds_slot *slot);
++struct pw259_ds_slot *pw259_ds_create(DWORD flags, DWORD tag, DWORD bits, DWORD channels,
++        DWORD block, DWORD rate, DWORD buflen, BOOL primary);
++void pw259_ds_play(struct pw259_ds_slot *slot, DWORD mixpos, BOOL looping);
++void pw259_ds_stop(struct pw259_ds_slot *slot);
++void pw259_ds_setpos(struct pw259_ds_slot *slot, DWORD newpos);
++void pw259_ds_position(struct pw259_ds_slot *slot);
++void pw259_ds_lock(struct pw259_ds_slot *slot, DWORD bytes);
++void pw259_ds_unlock(struct pw259_ds_slot *slot, DWORD off1, DWORD len1, DWORD off2, DWORD len2, BOOL ok);
++void pw259_ds_duplicated(struct pw259_ds_slot *slot);
++void pw259_ds_mixed(struct pw259_ds_slot *slot, BYTE *memory, DWORD old_pos, DWORD adv,
++        BOOL looping, BOOL stopped, BOOL resampled);
++void pw259_ds_flush(void);
++void pw259_ds_destroy(struct pw259_ds_slot *slot);
++
+ void put_mono2stereo(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
+ void put_mono2quad(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
+ void put_stereo2quad(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
+diff --git a/dlls/dsound/mixer.c b/dlls/dsound/mixer.c
+--- a/dlls/dsound/mixer.c
++++ b/dlls/dsound/mixer.c
+@@ -742,6 +742,7 @@
+ {
+     DWORD ipos, adv;
+ 
++    if (dsb->pw259) pw259_ds_mix_begin(dsb->pw259);
+     if (dsb->freqAdjustNum == dsb->freqAdjustDen)
+         adv = cp_fields_noresample(dsb, count); /* *freqAccNum is unmodified */
+     else
+@@ -757,7 +758,13 @@
+         }
+     }
+ 
++    if (dsb->pw259)
++        pw259_ds_mixed(dsb->pw259, dsb->buffer->memory, dsb->sec_mixpos, adv * dsb->pwfx->nBlockAlign,
++                (dsb->playflags & DSBPLAY_LOOPING) != 0, dsb->state == STATE_STOPPED,
++                dsb->freqAdjustNum != dsb->freqAdjustDen);
++
+     dsb->sec_mixpos = ipos;
++    if (dsb->pw259) pw259_ds_mix_end(dsb->pw259);
+ 
+     if(dsb->use_committed) {
+         dsb->committed_mixpos += adv * dsb->pwfx->nBlockAlign;
+@@ -1096,6 +1103,7 @@
+             AcquireSRWLockShared(&dev->buffer_list_lock);
+             DSOUND_PerformMix(dev);
+             ReleaseSRWLockShared(&dev->buffer_list_lock);
++            pw259_ds_flush();
+         }
+ 	return 0;
+ }
+diff --git a/dlls/dsound/pw259_dsound_obs.c b/dlls/dsound/pw259_dsound_obs.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/dsound/pw259_dsound_obs.c
+@@ -0,0 +1,246 @@
++/* Task 259. Installed as dlls/dsound/pw259_dsound_obs.c.
++ *
++ * Wrapper for the movie-buffer observer. Off unless DSOUND_PS4_MOVIE_OBS=1.
++ * DSOUND_PS4_MOVIE_CLEAR_PLAYED=1 additionally clears played bytes of a matched
++ * 48 kHz ring; it has no effect without the observer.
++ *
++ * Disabled: pw259_ds_create returns NULL, so every hook is one NULL test on
++ * dsb->pw259. pw259_ds_flush tests one global.
++ *
++ * Lock order: dsb->lock may be held on entry, then g_pw259_lock. Nothing here
++ * takes a dsound lock, and no output happens under g_pw259_lock.
++ */
++#ifndef PW259_HOST_TEST
++#include <stdarg.h>
++#include <string.h>
++#define COBJMACROS
++#include "windef.h"
++#include "winbase.h"
++#include "wine/debug.h"
++#include "pw259_dsound_obs.h"
++#endif
++
++#define PW259_DS_SLOTS 8
++
++struct pw259_ds_slot {
++    pw259_ds_core core;
++    int used;
++};
++
++static SRWLOCK g_pw259_lock = SRWLOCK_INIT;
++static struct pw259_ds_slot g_pw259_slots[PW259_DS_SLOTS];
++static int g_pw259_state; /* initialized once in loader-serialized PROCESS_ATTACH */
++static int g_pw259_clear;
++static uint32_t g_pw259_next_id, g_pw259_active, g_pw259_active_max, g_pw259_slots_full;
++
++static int pw259_env_is_one(const char *name)
++{
++    char value[4];
++    DWORD n = GetEnvironmentVariableA(name, value, sizeof(value));
++    return n == 1 && value[0] == '1';
++}
++
++/* Loader serialization publishes immutable settings before buffer/mixer APIs.
++ * No hot-path atomics, initialization locks, getenv or clocks while OFF. */
++void pw259_ds_configure(void)
++{
++    int on = pw259_env_is_one("DSOUND_PS4_MOVIE_OBS");
++    g_pw259_clear = on && pw259_env_is_one("DSOUND_PS4_MOVIE_CLEAR_PLAYED");
++    g_pw259_state = on ? 2 : 1;
++}
++
++static void pw259_ds_emit(const pw259_ds_row *r, uint32_t active, uint32_t active_max)
++{
++    MESSAGE("BLUR_DSOUND259 version=1 id=%u row=%u reason=%u epoch=%u rate=%u ch=%u mixed=%u commits=%u committed=%u "
++            "locks=%u pos=%u replay=%u silence=%u stale_amb=%u stale_lock=%u unanchored=%u nonloop=%u\n",
++            (unsigned)r->id, (unsigned)r->row, (unsigned)r->reason, (unsigned)r->epoch, (unsigned)r->rate,
++            (unsigned)r->channels, (unsigned)r->mixed, (unsigned)r->commits, (unsigned)r->committed,
++            (unsigned)r->locks, (unsigned)r->positions, (unsigned)r->replay, (unsigned)r->silence,
++            (unsigned)r->stale_ambiguous, (unsigned)r->stale_in_lock, (unsigned)r->unanchored, (unsigned)r->nonloop);
++    MESSAGE("BLUR_DSOUND259B id=%u row=%u replay_entries=%u longest_replay=%u lap_overruns=%u noncontig=%u desync=%u "
++            "overrun=%u partial=%u failed=%u lead_min=%u lead_last=%u gap_max_ms=%u cleared=%u clear_skip=%u "
++            "amb=%u dup=%u resampled=%u loop=%u dropped=%u active=%u active_max=%u\n",
++            (unsigned)r->id, (unsigned)r->row, (unsigned)r->replay_entries, (unsigned)r->longest_replay,
++            (unsigned)r->lap_overruns, (unsigned)r->noncontig, (unsigned)r->desync, (unsigned)r->write_overrun,
++            (unsigned)r->partial_unlock, (unsigned)r->failed_unlock, (unsigned)r->lead_min, (unsigned)r->lead_last,
++            (unsigned)r->commit_gap_max_ms, (unsigned)r->cleared, (unsigned)r->clear_skipped,
++            (unsigned)r->ambiguous, (unsigned)r->duplicated, (unsigned)r->resampled, (unsigned)r->looping,
++            (unsigned)r->dropped_rows, (unsigned)active, (unsigned)active_max);
++}
++
++struct pw259_ds_slot *pw259_ds_create(DWORD flags, DWORD tag, DWORD bits, DWORD channels,
++        DWORD block, DWORD rate, DWORD buflen, BOOL primary)
++{
++    struct pw259_ds_slot *slot = NULL;
++    uint32_t i, full = 0;
++
++    if (g_pw259_state != 2)
++        return NULL;
++    if (!pw259_ds_match(flags, tag, bits, channels, block, rate, buflen, primary))
++        return NULL;
++
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    for (i = 0; i < PW259_DS_SLOTS; i++) {
++        if (!g_pw259_slots[i].used) {
++            slot = &g_pw259_slots[i];
++            slot->used = 1;
++            pw259_ds_init(&slot->core, ++g_pw259_next_id, buflen, block, channels, rate);
++            break;
++        }
++    }
++    if (!slot)
++        full = ++g_pw259_slots_full;
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++
++    if (full == 1)
++        MESSAGE("BLUR_DSOUND259 slots_full=1 a matched buffer is not observed\n");
++    return slot;
++}
++
++void pw259_ds_play(struct pw259_ds_slot *slot, DWORD mixpos, BOOL looping)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    if (!slot->core.playing) {
++        g_pw259_active++;
++        if (g_pw259_active > g_pw259_active_max)
++            g_pw259_active_max = g_pw259_active;
++    }
++    pw259_ds_core_play(&slot->core, mixpos, looping != 0);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_stop(struct pw259_ds_slot *slot)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    if (slot->core.playing && g_pw259_active)
++        g_pw259_active--;
++    pw259_ds_core_stop(&slot->core);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_setpos(struct pw259_ds_slot *slot, DWORD newpos)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    pw259_ds_core_setpos(&slot->core, newpos);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_position(struct pw259_ds_slot *slot)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    pw259_ds_core_position(&slot->core);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_lock(struct pw259_ds_slot *slot, DWORD bytes)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    pw259_ds_core_lock(&slot->core, bytes);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_unlock(struct pw259_ds_slot *slot, DWORD off1, DWORD len1, DWORD off2, DWORD len2, BOOL ok)
++{
++    DWORD now = GetTickCount();
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    pw259_ds_core_unlock(&slot->core, off1, len1, off2, len2, ok != 0, now);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_duplicated(struct pw259_ds_slot *slot)
++{
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    pw259_ds_core_duplicated(&slot->core);
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++/* The observed mixer holds this lock across source copy, clearing and position
++ * publication. Lock cannot return a new writable pointer in that interval, and
++ * an existing writer keeps lock_outstanding nonzero until its Unlock commits.
++ * dsb->lock is SHARED in Wine; it cannot provide this exclusion by itself. */
++void pw259_ds_mix_begin(struct pw259_ds_slot *slot)
++{
++    (void)slot;
++    AcquireSRWLockExclusive(&g_pw259_lock);
++}
++
++void pw259_ds_mix_end(struct pw259_ds_slot *slot)
++{
++    (void)slot;
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++}
++
++/* Requires pw259_ds_mix_begin; no logs or buffer/list lock acquisition here. */
++void pw259_ds_mixed(struct pw259_ds_slot *slot, BYTE *memory, DWORD old_pos, DWORD adv,
++        BOOL looping, BOOL stopped, BOOL resampled)
++{
++    pw259_ds_clear plan;
++
++    memset(&plan, 0, sizeof(plan));
++    if (g_pw259_clear && slot->core.rate == 48000u
++            && pw259_ds_clear_plan(&slot->core, old_pos, adv, looping != 0, resampled != 0, &plan)) {
++        memset(memory + plan.off1, 0, plan.len1);
++        if (plan.len2)
++            memset(memory + plan.off2, 0, plan.len2);
++    }
++    if (stopped && slot->core.playing && g_pw259_active)
++        g_pw259_active--;
++    pw259_ds_core_mix(&slot->core, old_pos, adv, looping != 0, stopped != 0, resampled != 0);
++}
++
++/* Runs on the mixer thread after it has released the buffer list. */
++void pw259_ds_flush(void)
++{
++    uint32_t i;
++
++    if (g_pw259_state != 2)
++        return;
++    for (i = 0; i < PW259_DS_SLOTS; i++) {
++        pw259_ds_row row;
++        uint32_t active = 0, active_max = 0;
++        int have = 0;
++
++        memset(&row, 0, sizeof(row));
++        AcquireSRWLockExclusive(&g_pw259_lock);
++        if (g_pw259_slots[i].used && g_pw259_slots[i].core.row_pending) {
++            row = g_pw259_slots[i].core.pending;
++            g_pw259_slots[i].core.row_pending = 0;
++            active = g_pw259_active;
++            active_max = g_pw259_active_max;
++            g_pw259_active_max = g_pw259_active;
++            have = 1;
++        }
++        ReleaseSRWLockExclusive(&g_pw259_lock);
++        if (have)
++            pw259_ds_emit(&row, active, active_max);
++    }
++}
++
++void pw259_ds_destroy(struct pw259_ds_slot *slot)
++{
++    pw259_ds_row row, last;
++    uint32_t active, active_max;
++    int have_pending, have_last;
++
++    AcquireSRWLockExclusive(&g_pw259_lock);
++    if (slot->core.playing && g_pw259_active)
++        g_pw259_active--;
++    have_pending = slot->core.row_pending;
++    row = slot->core.pending;
++    slot->core.row_pending = 0;
++    slot->core.playing = 0;
++    pw259_ds_close_window(&slot->core, PW259_DS_REASON_DESTROY);
++    have_last = slot->core.row_pending;
++    last = slot->core.pending;
++    active = g_pw259_active;
++    active_max = g_pw259_active_max;
++    g_pw259_active_max = g_pw259_active;
++    slot->core.row_pending = 0;
++    slot->used = 0;
++    ReleaseSRWLockExclusive(&g_pw259_lock);
++
++    if (have_pending)
++        pw259_ds_emit(&row, active, active_max);
++    if (have_last)
++        pw259_ds_emit(&last, active, active_max);
++}
+diff --git a/dlls/dsound/pw259_dsound_obs.h b/dlls/dsound/pw259_dsound_obs.h
+new file mode 100644
+--- /dev/null
++++ b/dlls/dsound/pw259_dsound_obs.h
+@@ -0,0 +1,395 @@
++/* Task 259. Installed as dlls/dsound/pw259_dsound_obs.h.
++ *
++ * Pure accounting core for the Blur movie DirectSound ring. No locks, clocks,
++ * I/O or Wine types; the wrapper serializes calls and passes plain values.
++ * Compiles as C and as C++.
++ *
++ * Model. Offsets alone cannot separate zero laps from one, so positions are
++ * absolute byte counts within the source's own progress:
++ *   abs_mix          sum of the exact bytes cp_fields consumed; its value
++ *                    modulo buflen equals sec_mixpos.
++ *   [ext_start,ext_end)  the absolute range holding the current run of
++ *                    committed writes. A write can only be heard the next time
++ *                    the mixer reaches its offset, so its absolute position is
++ *                    the smallest value >= abs_mix with the right offset.
++ * Mixed bytes outside the extent are stale. They are a replay if that offset
++ * has ever been committed, otherwise never-written initial silence.
++ *
++ * Anything that breaks the model (non-contiguous commit, duplicate sharing the
++ * memory, position desync) marks the buffer ambiguous, and its stale bytes go
++ * to a separate counter rather than being reported as replay.
++ */
++#ifndef PW259_DSOUND_OBS_H
++#define PW259_DSOUND_OBS_H
++
++#include <stdint.h>
++
++#define PW259_DS_FLAGS       0x18000u /* GETCURRENTPOSITION2 | GLOBALFOCUS */
++#define PW259_DS_RING_FRAMES 16384u
++#define PW259_DS_MAX_ROWS    600u
++
++enum { PW259_DS_REASON_WINDOW = 0, PW259_DS_REASON_STOP = 1, PW259_DS_REASON_DESTROY = 2 };
++
++typedef struct pw259_ds_row {
++    uint32_t id, row, epoch, reason, rate, channels;
++    uint32_t mixed, commits, committed, locks, positions;
++    uint32_t replay, silence, stale_ambiguous, stale_in_lock, unanchored, nonloop;
++    uint32_t replay_entries, longest_replay, lap_overruns;
++    uint32_t noncontig, desync, write_overrun, partial_unlock, failed_unlock;
++    uint32_t lead_min, lead_last, commit_gap_max_ms;
++    uint32_t cleared, clear_skipped;
++    uint32_t ambiguous, duplicated, resampled, looping;
++    uint32_t dropped_rows;
++} pw259_ds_row;
++
++typedef struct pw259_ds_core {
++    uint32_t id, buflen, block, channels, rate, window_bytes;
++    uint32_t epoch, lock_outstanding, last_lock_bytes;
++    int playing, commit_valid, ambiguous, duplicated, cover_valid, cover_any;
++    int last_resampled, last_looping, have_commit_time;
++    int clear_used, clear_dirty;
++    uint64_t abs_mix, ext_start, ext_end;
++    uint32_t cover_start, cover_len;
++    uint32_t last_commit_ms, replay_run;
++    uint32_t rows, dropped_rows;
++    int row_pending;
++    pw259_ds_row w; /* the open window */
++    pw259_ds_row pending;
++} pw259_ds_core;
++
++typedef struct pw259_ds_clear {
++    uint32_t off1, len1, off2, len2;
++} pw259_ds_clear;
++
++static inline int pw259_ds_match(uint32_t flags, uint32_t tag, uint32_t bits, uint32_t channels,
++        uint32_t block, uint32_t rate, uint32_t buflen, int primary)
++{
++    if (primary || flags != PW259_DS_FLAGS) return 0;
++    if (tag != 1u && tag != 0xFFFEu) return 0;
++    if (bits != 16u || channels < 1u || channels > 8u) return 0;
++    if (block != channels * 2u || rate == 0u) return 0;
++    return buflen == PW259_DS_RING_FRAMES * block;
++}
++
++static inline void pw259_ds_window_reset(pw259_ds_core *c)
++{
++    uint32_t i;
++    for (i = 0; i < sizeof(c->w); i++) ((unsigned char *)&c->w)[i] = 0;
++    c->w.lead_min = 0xFFFFFFFFu;
++}
++
++static inline void pw259_ds_init(pw259_ds_core *c, uint32_t id, uint32_t buflen, uint32_t block,
++        uint32_t channels, uint32_t rate)
++{
++    uint32_t i;
++    for (i = 0; i < sizeof(*c); i++) ((unsigned char *)c)[i] = 0;
++    c->id = id;
++    c->buflen = buflen;
++    c->block = block;
++    c->channels = channels;
++    c->rate = rate;
++    c->window_bytes = rate * block;
++    c->cover_valid = 1;
++    pw259_ds_window_reset(c);
++}
++
++static inline uint64_t pw259_ds_lift(const pw259_ds_core *c, uint32_t offset)
++{
++    uint32_t mix = (uint32_t)(c->abs_mix % c->buflen);
++    if (offset >= mix)
++        return c->abs_mix + (offset - mix);
++    return c->abs_mix + (c->buflen - mix) + offset;
++}
++
++static inline uint32_t pw259_ds_seg_overlap(uint32_t a, uint32_t alen, uint32_t b, uint32_t blen)
++{
++    uint32_t lo = a > b ? a : b;
++    uint32_t hi = (a + alen) < (b + blen) ? (a + alen) : (b + blen);
++    return hi > lo ? hi - lo : 0;
++}
++
++/* Overlap of two arcs on a ring of `size`; both arcs have length <= size. */
++static inline uint32_t pw259_ds_arc_overlap(uint32_t size, uint32_t a, uint32_t alen, uint32_t b, uint32_t blen)
++{
++    uint32_t a1 = alen, a2 = 0, b1 = blen, b2 = 0, total;
++    if (a + alen > size) { a1 = size - a; a2 = alen - a1; }
++    if (b + blen > size) { b1 = size - b; b2 = blen - b1; }
++    total = pw259_ds_seg_overlap(a, a1, b, b1);
++    if (b2) total += pw259_ds_seg_overlap(a, a1, 0, b2);
++    if (a2) total += pw259_ds_seg_overlap(0, a2, b, b1);
++    if (a2 && b2) total += pw259_ds_seg_overlap(0, a2, 0, b2);
++    return total;
++}
++
++static inline void pw259_ds_note_lead(pw259_ds_core *c)
++{
++    uint64_t lead;
++    if (!c->commit_valid) return;
++    lead = c->ext_end > c->abs_mix ? c->ext_end - c->abs_mix : 0;
++    c->w.lead_last = (uint32_t)lead;
++    if ((uint32_t)lead < c->w.lead_min) c->w.lead_min = (uint32_t)lead;
++}
++
++static inline void pw259_ds_commit_seg(pw259_ds_core *c, uint32_t offset, uint32_t len)
++{
++    uint64_t start;
++    if (!len) return;
++    if (offset >= c->buflen || len > c->buflen - offset) {
++        c->ambiguous = 1;
++        c->cover_valid = 0;
++        return;
++    }
++    if (c->commit_valid && (uint32_t)(c->ext_end % c->buflen) == offset) {
++        if (c->ext_end >= c->abs_mix) {
++            c->ext_end += len;
++        } else { /* the mixer already passed the end of this run */
++            start = pw259_ds_lift(c, offset);
++            c->ext_start = start;
++            c->ext_end = start + len;
++        }
++        if (c->cover_valid && c->cover_any) {
++            uint32_t next = c->cover_len + len;
++            c->cover_len = next > c->buflen ? c->buflen : next;
++        }
++    } else {
++        if (c->commit_valid) {
++            c->w.noncontig++;
++            c->ambiguous = 1;
++            c->cover_valid = 0;
++        } else if (c->cover_any && c->cover_valid) {
++            /* first commit of a new anchor: contiguous with the old cover or not */
++            uint32_t expect = (c->cover_start + c->cover_len) % c->buflen;
++            if (c->cover_len < c->buflen && expect != offset)
++                c->cover_valid = 0;
++            else {
++                uint32_t next = c->cover_len + len;
++                c->cover_len = next > c->buflen ? c->buflen : next;
++            }
++        }
++        if (!c->cover_any) {
++            c->cover_any = 1;
++            c->cover_start = offset;
++            c->cover_len = len;
++        }
++        start = pw259_ds_lift(c, offset);
++        c->ext_start = start;
++        c->ext_end = start + len;
++        c->commit_valid = 1;
++    }
++    if (c->ext_end - c->abs_mix > c->buflen)
++        c->w.write_overrun += (uint32_t)(c->ext_end - c->abs_mix - c->buflen);
++    if (c->ext_end - c->ext_start > c->buflen)
++        c->ext_start = c->ext_end - c->buflen;
++}
++
++/* A failed Unlock changes no extent. */
++static inline void pw259_ds_core_unlock(pw259_ds_core *c, uint32_t off1, uint32_t len1,
++        uint32_t off2, uint32_t len2, int ok, uint32_t now_ms)
++{
++    uint32_t total = len1 + len2;
++    /* A rejected Unlock does not relinquish the caller's writable pointer.
++     * Unpaired, partial, or concurrent Locks cannot be mapped exactly with this
++     * bounded model. Keep observation but permanently exclude clearing. */
++    if (!ok) { c->w.failed_unlock++; c->ambiguous = 1; return; }
++    if (!c->lock_outstanding) c->ambiguous = 1;
++    else c->lock_outstanding--;
++    if (c->last_lock_bytes && total != c->last_lock_bytes) {
++        c->w.partial_unlock++;
++        c->ambiguous = 1;
++    }
++    c->last_lock_bytes = 0;
++    if (!total) return;
++    pw259_ds_commit_seg(c, off1, len1);
++    pw259_ds_commit_seg(c, off2, len2);
++    c->w.commits++;
++    c->w.committed += total;
++    if (c->have_commit_time) {
++        uint32_t gap = now_ms - c->last_commit_ms;
++        if (gap > c->w.commit_gap_max_ms) c->w.commit_gap_max_ms = gap;
++    }
++    c->have_commit_time = 1;
++    c->last_commit_ms = now_ms;
++    pw259_ds_note_lead(c);
++}
++
++static inline void pw259_ds_core_lock(pw259_ds_core *c, uint32_t bytes)
++{
++    if (c->lock_outstanding) c->ambiguous = 1;
++    c->lock_outstanding++;
++    c->last_lock_bytes = bytes;
++    c->w.locks++;
++}
++
++static inline void pw259_ds_core_position(pw259_ds_core *c)
++{
++    c->w.positions++;
++    pw259_ds_note_lead(c);
++}
++
++static inline void pw259_ds_classify_stale(pw259_ds_core *c, uint64_t start, uint64_t len)
++{
++    uint64_t replay = 0;
++    if (!len) return;
++    if (c->ambiguous || !c->cover_valid) { c->w.stale_ambiguous += (uint32_t)len; c->replay_run = 0; return; }
++    if (c->lock_outstanding) { c->w.stale_in_lock += (uint32_t)len; return; }
++    if (c->clear_used) {
++        /* Played bytes were zeroed, so they are silence, unless a skipped clear
++         * means some may still hold old audio. */
++        if (c->clear_dirty) c->w.stale_ambiguous += (uint32_t)len;
++        else c->w.silence += (uint32_t)len;
++        c->replay_run = 0;
++        return;
++    }
++    if (c->cover_any) {
++        uint64_t laps = len / c->buflen;
++        uint32_t rest = (uint32_t)(len % c->buflen);
++        replay = laps * c->cover_len;
++        if (rest)
++            replay += pw259_ds_arc_overlap(c->buflen, (uint32_t)(start % c->buflen), rest,
++                                           c->cover_start, c->cover_len);
++    }
++    c->w.replay += (uint32_t)replay;
++    c->w.silence += (uint32_t)(len - replay);
++    if (replay) {
++        if (!c->replay_run) c->w.replay_entries++;
++        c->replay_run += (uint32_t)replay;
++        if (c->replay_run > c->w.longest_replay) c->w.longest_replay = c->replay_run;
++    }
++}
++
++static inline void pw259_ds_close_window(pw259_ds_core *c, uint32_t reason)
++{
++    pw259_ds_row *w = &c->w;
++    if (!w->mixed && !w->commits && !w->locks && reason == PW259_DS_REASON_WINDOW) return;
++    if (c->rows >= PW259_DS_MAX_ROWS) { pw259_ds_window_reset(c); return; }
++    if (c->row_pending) { c->dropped_rows++; pw259_ds_window_reset(c); return; }
++    if (w->lead_min == 0xFFFFFFFFu) w->lead_min = 0;
++    w->id = c->id;
++    w->row = ++c->rows;
++    w->epoch = c->epoch;
++    w->reason = reason;
++    w->rate = c->rate;
++    w->channels = c->channels;
++    w->ambiguous = (uint32_t)c->ambiguous;
++    w->duplicated = (uint32_t)c->duplicated;
++    w->resampled = (uint32_t)c->last_resampled;
++    w->looping = (uint32_t)c->last_looping;
++    w->dropped_rows = c->dropped_rows;
++    c->pending = *w;
++    c->row_pending = 1;
++    pw259_ds_window_reset(c);
++}
++
++/* Call before the new sec_mixpos is published. */
++static inline void pw259_ds_core_mix(pw259_ds_core *c, uint32_t old_pos, uint32_t adv,
++        int looping, int stopped, int resampled)
++{
++    uint64_t a, b;
++    uint32_t cur = (uint32_t)(c->abs_mix % c->buflen);
++    c->last_looping = looping;
++    c->last_resampled = resampled;
++    if (cur != old_pos) {
++        c->w.desync++;
++        c->ambiguous = 1;
++        c->abs_mix += (old_pos + c->buflen - cur) % c->buflen;
++    }
++    a = c->abs_mix;
++    b = a + adv;
++    c->w.mixed += adv;
++    if (adv) {
++        if (!looping) {
++            c->w.nonloop += adv;
++        } else if (!c->commit_valid) {
++            c->w.unanchored += adv;
++        } else {
++            uint64_t below = a < c->ext_start ? ((b < c->ext_start ? b : c->ext_start) - a) : 0;
++            uint64_t above_from = a > c->ext_end ? a : c->ext_end;
++            uint64_t above = b > above_from ? b - above_from : 0;
++            if (below) pw259_ds_classify_stale(c, a, below);
++            if (above) pw259_ds_classify_stale(c, above_from, above);
++            if (!below && !above) c->replay_run = 0;
++            if (above && b - c->ext_end > c->buflen) c->w.lap_overruns++;
++        }
++    }
++    c->abs_mix = b;
++    pw259_ds_note_lead(c);
++    if (stopped) {
++        c->playing = 0;
++        c->commit_valid = 0;
++        pw259_ds_close_window(c, PW259_DS_REASON_STOP);
++    } else if (c->w.mixed >= c->window_bytes) {
++        pw259_ds_close_window(c, PW259_DS_REASON_WINDOW);
++    }
++}
++
++/* Decide whether the bytes about to be consumed can be cleared. Called before
++ * pw259_ds_core_mix for the same step. The bytes must not also hold committed
++ * data for the next lap, and no writer may have the buffer locked. */
++static inline int pw259_ds_clear_plan(pw259_ds_core *c, uint32_t old_pos, uint32_t adv,
++        int looping, int resampled, pw259_ds_clear *out)
++{
++    uint64_t a = c->abs_mix, b = a + adv, next_a = a + c->buflen, next_b = b + c->buflen;
++    if (!adv) return 0;
++    if (!looping || resampled || !c->commit_valid || c->ambiguous || c->duplicated
++            || c->lock_outstanding || adv > c->buflen
++            || (uint32_t)(a % c->buflen) != old_pos
++            || (c->ext_end > next_a && c->ext_start < next_b)) {
++        c->w.clear_skipped += adv;
++        if (c->cover_any) c->clear_dirty = 1;
++        return 0;
++    }
++    c->clear_used = 1;
++    out->off1 = old_pos;
++    if (old_pos + adv > c->buflen) {
++        out->len1 = c->buflen - old_pos;
++        out->off2 = 0;
++        out->len2 = adv - out->len1;
++    } else {
++        out->len1 = adv;
++        out->off2 = 0;
++        out->len2 = 0;
++    }
++    c->w.cleared += adv;
++    return 1;
++}
++
++/* Play from STATE_STOPPED. The extent is kept so pre-Play writes stay anchored;
++ * Stop and SetCurrentPosition are what invalidate it. */
++static inline void pw259_ds_core_play(pw259_ds_core *c, uint32_t mixpos, int looping)
++{
++    uint32_t cur = (uint32_t)(c->abs_mix % c->buflen);
++    if (cur != mixpos) {
++        c->abs_mix += (mixpos + c->buflen - cur) % c->buflen;
++        c->commit_valid = 0;
++    }
++    c->epoch++;
++    c->playing = 1;
++    c->last_looping = looping;
++    c->replay_run = 0;
++}
++
++static inline void pw259_ds_core_stop(pw259_ds_core *c)
++{
++    c->playing = 0;
++    c->commit_valid = 0;
++    c->replay_run = 0;
++    pw259_ds_close_window(c, PW259_DS_REASON_STOP);
++}
++
++static inline void pw259_ds_core_setpos(pw259_ds_core *c, uint32_t newpos)
++{
++    uint32_t cur = (uint32_t)(c->abs_mix % c->buflen);
++    c->abs_mix += (newpos + c->buflen - cur) % c->buflen;
++    c->commit_valid = 0;
++    c->replay_run = 0;
++    c->epoch++;
++}
++
++static inline void pw259_ds_core_duplicated(pw259_ds_core *c)
++{
++    c->duplicated = 1;
++    c->ambiguous = 1;
++    c->cover_valid = 0;
++}
++
++#endif /* PW259_DSOUND_OBS_H */

@@ -1,0 +1,5 @@
+# Private names for scan_names.py (--private FILE or SCAN_NAMES_PRIVATE=FILE).
+# Copy this file outside the repository and list the build-host account and
+# personal names that must never appear in a package, one per line.
+# A line "=name" matches only as a whole word (case-insensitive).
+# This example lists no names.

@@ -1,0 +1,201 @@
+JkFlow 1.00 Wine PS4 runtime: winevulkan PE (i386 winevulkan.dll): direct batch append (direct260)
+
+i386-windows/winevulkan.dll was built at this state. direct260_unixshim.c is compiled
+into that DLL by build/native288-recipes/direct260build.py (not part of the Wine Makefile).
+
+ dlls/winevulkan/pw_vk_batch_pe.c
+ dlls/winevulkan/direct260_unixshim.c
+---
+diff --git a/dlls/winevulkan/pw_vk_batch_pe.c b/dlls/winevulkan/pw_vk_batch_pe.c
+--- a/dlls/winevulkan/pw_vk_batch_pe.c
++++ b/dlls/winevulkan/pw_vk_batch_pe.c
+@@ -130,6 +130,55 @@
+  if(!pw247_parse_mask(value,n,sizeof(value),&mask,&generated))return FALSE;
+  opcode_mask=mask;generated_allowed=generated;return TRUE;
+ }
++
++/* Direct batch append (native288 direct260). See direct260build.py. */
++static BOOL direct_allowed,direct_mode,query_nowait,async_cb_allowed,async_cb;
++/* asynccb260: vkBeginCommandBuffer/vkEndCommandBuffer as stream records, only
++ * when the Unix side answers this capability, so an old Unix half never
++ * receives the new opcodes. Off with PW_VK_ASYNC_CB=0. */
++#define PW260_BEGIN_CB 0x2601u
++#define PW260_END_CB 0x2602u
++#define PW260_CB_NAME "__wine_pw_vk_async_cb260"
++#define PW260_CB_CAPABILITY 0x50572601u
++static volatile LONG64 query_nowait_total;
++static unsigned char *direct_buf[2];
++static unsigned direct_active;
++static size_t direct_used,direct_records;
++static LONG direct_lock;
++static void direct_acquire(void){while(InterlockedCompareExchange(&direct_lock,1,0))YieldProcessor();}
++static void direct_release(void){InterlockedExchange(&direct_lock,0);}
++static int direct_append(uint32_t opcode,const unsigned char *payload,uint32_t bytes)
++{
++ size_t total=(PW_VK_STREAM_HEADER+(size_t)bytes+7)&~(size_t)7;unsigned char *d;uint32_t word;uint64_t ticket;
++ if(bytes>PW_VK_BATCH_ARENA)return PW_VK_STREAM_INVALID;
++ direct_acquire();
++ if(total>PW_VK_BATCH_SCRATCH-direct_used){direct_release();return PW_VK_STREAM_FULL;}
++ d=direct_buf[direct_active]+direct_used;
++ ticket=atomic_fetch_add_explicit(&stream_sequence.next,1,memory_order_relaxed);
++ word=PW_VK_STREAM_MAGIC;memcpy(d,&word,4);
++ word=PW_VK_STREAM_VERSION;memcpy(d+4,&word,4);
++ word=(uint32_t)total;memcpy(d+8,&word,4);
++ memcpy(d+12,&opcode,4);
++ memcpy(d+16,&bytes,4);
++ memset(d+20,0,4);
++ memcpy(d+24,&ticket,8);
++ memcpy(d+PW_VK_STREAM_HEADER,payload,bytes);
++ memset(d+PW_VK_STREAM_HEADER+bytes,0,total-PW_VK_STREAM_HEADER-bytes);
++ direct_used+=total;direct_records++;
++ direct_release();
++ return PW_VK_STREAM_OK;
++}
++/* Called only by the drain owner under the PE gate. */
++static unsigned char *direct_take(size_t *bytes,size_t *records)
++{
++ unsigned char *batch;
++ direct_acquire();
++ batch=direct_buf[direct_active];*bytes=direct_used;*records=direct_records;
++ direct_active^=1;direct_used=0;direct_records=0;
++ direct_release();
++ enqueued_total+=*records;
++ return batch;
++}
+ static BOOL CALLBACK initialize(INIT_ONCE *o,void *p,void **ctx)
+ {
+  char env[8];(void)o;(void)p;(void)ctx;
+@@ -142,10 +191,15 @@
+  fallback_profile=stats_enabled&&GetEnvironmentVariableA("PW_VK_BATCH_FALLBACK_PROFILE",env,sizeof(env))==1&&env[0]=='1';
+  enabled=GetEnvironmentVariableA("PW_VK_BATCH",env,sizeof(env))==1&&env[0]=='1'&&!pw_vk_stream_environment_unsafe();
+  if(!read_opcode_mask())enabled=FALSE; /* Invalid explicit masks fail closed. */
++ WINE_MESSAGE("PW_VK_DIRECT260 init enabled=%u\n",(unsigned)enabled);
+  if(!enabled)return TRUE;
+  InitializeCriticalSection(&gate);InitializeCriticalSection(&registry_gate);InitializeCriticalSection(&metadata_gate);tls=TlsAlloc();
+  pw_vk_spsc_sequence_init(&stream_sequence);
+  scratch=heap_alloc(PW_VK_BATCH_SCRATCH);
++ direct_buf[0]=scratch;direct_buf[1]=heap_alloc(PW_VK_BATCH_SCRATCH);
++ direct_allowed=direct_buf[1]&&!(GetEnvironmentVariableA("PW_VK_DIRECT",env,sizeof(env))==1&&env[0]=='0');
++ query_nowait=GetEnvironmentVariableA("PW_VK_QUERY_NOWAIT",env,sizeof(env))==1&&env[0]=='1';
++ async_cb_allowed=!(GetEnvironmentVariableA("PW_VK_ASYNC_CB",env,sizeof(env))==1&&env[0]=='0');
+  enabled=tls!=TLS_OUT_OF_INDEXES&&scratch;
+  defer_descriptors=enabled&&GetEnvironmentVariableA("PW_VK_DEFER_DESCRIPTORS",env,sizeof(env))==1&&env[0]=='1';
+  /* Diagnostics are independently opt-in; FPS confirmation leaves them off. */
+@@ -260,15 +314,16 @@
+ static NTSTATUS raw_call(unsigned int code,void *args){if(stats_enabled)InterlockedIncrement64((LONG64 *)&crossings_total);return pw_vk_present_call(code,args);}
+ static NTSTATUS flush_call(unsigned int code,void *args)
+ {
+- size_t bytes=0,records=0;struct pw_vk_batch_params p;NTSTATUS status;
+- while(!collect(&bytes,&records)){
++ size_t bytes=0,records=0;struct pw_vk_batch_params p;NTSTATUS status;unsigned char *batch=scratch;
++ if(direct_mode)batch=direct_take(&bytes,&records);
++ else while(!collect(&bytes,&records)){
+   /* Legacy-only split: an ordered prefix, flush-only, no caller status. */
+   p.version=PW_VK_BATCH_LEGACY_VERSION;p.batch=(UINT_PTR)scratch;p.bytes=bytes;p.code=unix_count;p.args=0;p.status=STATUS_SUCCESS;
+   status=raw_call(unix_pw_vk_batch,&p);if(status||p.status)fatal();
+   dispatches_total++;records_total+=records;split_total++;
+  }
+  if(!bytes&&!async_backend){status=code==unix_count?STATUS_SUCCESS:raw_call(code,args);pw_vk_retirement_drain(&retirement,free,heap_free);reclaim();return status;}
+- p.version=pw247_batch_version(backend_kind);p.batch=(UINT_PTR)scratch;p.bytes=bytes;p.code=code;p.args=(UINT_PTR)args;p.status=STATUS_SUCCESS;
++ p.version=pw247_batch_version(backend_kind);p.batch=(UINT_PTR)batch;p.bytes=bytes;p.code=code;p.args=(UINT_PTR)args;p.status=STATUS_SUCCESS;
+  status=raw_call(unix_pw_vk_batch,&p);if(status)fatal();
+  pw_vk_present_observe(code,args,p.status);
+  dispatches_total++;records_total+=records;if(code<unix_count)piggyback_total++;
+@@ -354,6 +409,17 @@
+ static int encode(unsigned int code,void *args,unsigned char *wire,size_t *written,uint32_t *opcode)
+ {
+  size_t n=0;int encoded=0;uint32_t op=0,selected=call_opcode(code);
++ if(async_cb&&code==unix_vkEndCommandBuffer){
++  struct vkEndCommandBuffer_params *q=args;uint32_t h=(uint32_t)(uintptr_t)q->commandBuffer;
++  memcpy(wire,&h,4);q->result=VK_SUCCESS;*written=4;*opcode=PW260_END_CB;return 1;
++ }
++ if(async_cb&&code==unix_vkBeginCommandBuffer){
++  struct vkBeginCommandBuffer_params *q=args;const VkCommandBufferBeginInfo *b=q->pBeginInfo;
++  if(b&&b->sType==VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO&&!b->pNext&&!b->pInheritanceInfo){
++   uint32_t v[2]={(uint32_t)(uintptr_t)q->commandBuffer,(uint32_t)b->flags};
++   memcpy(wire,v,8);q->result=VK_SUCCESS;*written=8;*opcode=PW260_BEGIN_CB;return 1;
++  }
++ }
+  if(!selected||!(opcode_mask&(1u<<(selected-1)))){*written=0;*opcode=0;return 0;}
+  switch(code){
+  case unix_vkCmdDrawIndexed:{const struct vkCmdDrawIndexed_params *p=args;op=PW_VK_DRAW_INDEXED;encoded=pw_vk_wire_draw(wire,4096,(uint32_t)(uintptr_t)p->commandBuffer,p->indexCount,p->instanceCount,p->firstIndex,p->vertexOffset,p->firstInstance,&n);break;}
+@@ -507,7 +573,7 @@
+     * synchronous creator can reuse its handle. A FULL retry needs no metadata
+     * to encode destruction again. */
+    if(bytes)retire_template(code,args);
+-   appended=bytes?pw_vk_spsc_append(&stream_sequence,&p->stream,opcode,wire,bytes):PW_VK_STREAM_INVALID;
++   appended=bytes?(direct_mode?direct_append(opcode,wire,(uint32_t)bytes):pw_vk_spsc_append(&stream_sequence,&p->stream,opcode,wire,bytes)):PW_VK_STREAM_INVALID;
+    if(deferred)ReleaseSRWLockShared(&mapping_lock);
+    if(appended==PW_VK_STREAM_OK){
+     InterlockedExchange(&p->publishing,0);return STATUS_SUCCESS;
+@@ -534,6 +600,10 @@
+  }
+  fallback_total++;
+  if(fallback_profile&&code<unix_count)fallback_counts[code]++;
++ if(query_nowait&&async_backend&&code==unix_vkGetQueryPoolResults
++    &&!(((const struct vkGetQueryPoolResults_params *)args)->flags&VK_QUERY_RESULT_WAIT_BIT)){
++  query_nowait_total++;leave();return raw_call(code,args);
++ }
+  if(pw_vk_stream_progress_call(code)||pw_vk_stream_compile_call(code)){
+   /* Transfer owned records before unlocking. The async backend waits only
+    * the referenced lanes in raw submit/lifecycle hooks. Never run a blocking
+@@ -564,7 +634,7 @@
+   struct vkCreateInstance_params *q=args;
+   if(q->result==VK_SUCCESS&&q->pInstance&&*q->pInstance){
+    int kind=pw247_negotiate(ask_capability,*q->pInstance);
+-   backend_kind=kind;async_backend=kind==PW247_ASYNC;negotiated=kind!=PW247_NONE;
++   backend_kind=kind;async_backend=kind==PW247_ASYNC;direct_mode=direct_allowed&&kind==PW247_ASYNC;WINE_MESSAGE("PW_VK_DIRECT version=1 enabled=%u\n",(unsigned)direct_mode);negotiated=kind!=PW247_NONE;async_cb=async_cb_allowed&&kind==PW247_ASYNC&&ask_capability(*q->pInstance,PW260_CB_NAME)==PW260_CB_CAPABILITY;WINE_MESSAGE("PW_VK_ASYNC_CB260 enabled=%u\n",(unsigned)async_cb);
+    /* One line per process (first instance), never per frame. */
+    if(!InterlockedExchange(&negotiation_reported,1))
+     WINE_MESSAGE("PW_VK_BATCH_NEGOTIATED version=1 backend=%s batch_version=%u mask=0x%x generated=%u legacy_limit=%u\n",pw247_backend_name(kind),(unsigned)pw247_batch_version(kind),(unsigned)opcode_mask,(unsigned)pw247_generated_enabled(opcode_mask,generated_allowed,kind),(unsigned)(kind==PW247_LEGACY?PW_VK_BATCH_LEGACY_SCRATCH:0));
+diff --git a/dlls/winevulkan/direct260_unixshim.c b/dlls/winevulkan/direct260_unixshim.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/winevulkan/direct260_unixshim.c
+@@ -0,0 +1,46 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Replaces winecrt0's unix_lib.c for wvkdirect.dll, a renamed copy of the
++ * i386 winevulkan PE half that lives in the game directory. Wine only binds a
++ * Unix library to builtin modules found in its own (read-only) library
++ * directory, so this copy borrows the Unix half of the real winevulkan.dll,
++ * which is the same build. The real module is only loaded, never called. */
++#include <stdarg.h>
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "wine/unixlib.h"
++
++static NTSTATUS WINAPI unix_call_fallback( unixlib_handle_t handle, unsigned int code, void *args )
++{
++    return STATUS_DLL_NOT_FOUND;
++}
++
++static void *get_dispatcher( void )
++{
++    UNICODE_STRING ntdll_name = RTL_CONSTANT_STRING( L"ntdll.dll" );
++    HMODULE module;
++    void **dispatcher;
++
++    LdrGetDllHandle( NULL, 0, &ntdll_name, &module );
++    dispatcher = RtlFindExportedRoutineByName( module, "__wine_unix_call_dispatcher" );
++    return dispatcher ? *dispatcher : (void *)unix_call_fallback;
++}
++
++static NTSTATUS WINAPI unix_call_init( unixlib_handle_t handle, unsigned int code, void *args )
++{
++    InterlockedExchangePointer( (void **)&__wine_unix_call_dispatcher, get_dispatcher() );
++    return __wine_unix_call_dispatcher( handle, code, args );
++}
++
++unixlib_handle_t __wine_unixlib_handle = 0;
++NTSTATUS (WINAPI *__wine_unix_call_dispatcher)( unixlib_handle_t, unsigned int, void * ) = unix_call_init;
++
++NTSTATUS WINAPI __wine_init_unix_call(void)
++{
++    HMODULE real = LoadLibraryW( L"winevulkan.dll" );
++    if (!real) return STATUS_DLL_NOT_FOUND;
++    return NtQueryVirtualMemory( GetCurrentProcess(), real, MemoryWineLoadUnixLib,
++                                 &__wine_unixlib_handle, sizeof(__wine_unixlib_handle), NULL );
++}

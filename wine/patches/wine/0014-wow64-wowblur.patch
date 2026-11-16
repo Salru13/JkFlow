@@ -1,0 +1,39 @@
+JkFlow 1.00 Wine PS4 runtime: wow64: CPU backend name wowblur.dll (wow64.dll)
+
+
+ dlls/wow64/syscall.c
+---
+diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
+--- a/dlls/wow64/syscall.c
++++ b/dlls/wow64/syscall.c
+@@ -916,8 +916,8 @@
+  */
+ static HMODULE load_environment_cpu_dll(void)
+ {
+-    static const WCHAR *const allowed[] = { L"wow64native.dll", L"wowprospero.dll" };
+-    static const char *const names[] = { "wow64native.dll", "wowprospero.dll" };
++    static const WCHAR *const allowed[] = { L"wow64native.dll", L"wowblur.dll" };
++    static const char *const names[] = { "wow64native.dll", "wowblur.dll" };
+     const WCHAR *dir = get_machine_wow64_dir( IMAGE_FILE_MACHINE_TARGET_HOST );
+     WCHAR value[32], path[MAX_PATH];
+     UNICODE_STRING name, str;
+@@ -934,7 +934,7 @@
+     for (i = 0; i < ARRAY_SIZE(allowed); i++) if (!wcscmp( value, allowed[i] )) break;
+     if (i == ARRAY_SIZE(allowed))
+     {
+-        ERR( "ignoring WINE_PS5_WOW64_CPU: not wow64native.dll or wowprospero.dll\n" );
++        ERR( "ignoring WINE_PS5_WOW64_CPU: not wow64native.dll or wowblur.dll\n" );
+         return NULL;
+     }
+     swprintf( path, MAX_PATH, L"%s\\%s", dir, allowed[i] );
+@@ -1096,8 +1096,8 @@
+         NTSTATUS status = ((NTSTATUS (WINAPI *)(void))pBTCpuProcessInit)();
+         if (status)
+         {
+-            ERR( "wow64native.dll did not start (%lx); using wowprospero.dll\n", status );
+-            module = load_64bit_module( L"wowprospero.dll" );
++            ERR( "wow64native.dll did not start (%lx); using wowblur.dll\n", status );
++            module = load_64bit_module( L"wowblur.dll" );
+             GET_CPU_PTRS();
+             pBTCpuProcessInit();
+         }

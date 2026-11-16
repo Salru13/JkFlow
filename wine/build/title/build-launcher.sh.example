@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Build entry of the JkFlow 1.00 title (eboot.bin + sce_module/relocated_wine_app.prx).
+# Template of the build-launcher.sh that prepare_blur100.py r4 leaves in the
+# prepared title tree; only the build-host paths are replaced by variables.
+# The inputs are folders of the build root; wine/BUILD.md ("Title build entry")
+# says where each one comes from.
+set -euo pipefail
+base="${JKFLOW_BUILD_ROOT:?set JKFLOW_BUILD_ROOT to the build root}"
+out="$base/blur-launcher-r4"                        # the tree prepare_blur100.py r4 writes
+# Host tools: llvm-* links of the order-284 runtime build, the mingw wrappers, unpacked build deps.
+export PATH="$base/native248-build-wine/tools:$base/private-bin:$base/deps/rootfs/usr/bin:$PATH"
+export MESA_BUILD="$base/native248-platform"        # orbis-compat headers (FreeBSD signal.h) of the SDK bundle
+export TITLE_ID=BLUR00001 TITLE=JkFlow PW_BUILD_ID=BLUR-1.00 PKG_VERSION=01.00
+export PW_ROOT="$out/prospero" PW_APP_OBJ="$out/app-obj" PW_BUILD_ROOT="$out/reloc-build"
+export PW_MODULE_STUBS_DIR="$base/native245-out/pkg-stage/sce_module"   # prx files used as link stubs
+export N245_SEED_DIR="$base/blur100-paths6/seed-build/seed"             # the paths6 seed (seed245/blur-native248)
+export N245_SEED_END=ed7b2bdb557d3d3e49c2ca72b027fc28cdb6ec7d9d689d49204c5d23e93925e7
+export PW_PELIB="$base/blur100-paths6/seed-build/runtime" PW_WOW_CPU_DLL=wowblur.dll   # PE runtime the seed pins
+export PW_EBOOT_NO_RELRO=1 PW_SPLIT_RUNTIME=0 PW_WINE64_WAIT_WATCHDOG=0 PW_WINE64_SERVER_DIRECT_OFF=0 PW_WINE64_HEAP_FLEXIBLE=0
+export PW_PS4_ROOT="$base/orbis-win-9749fcd" TMPDIR="$out/tmp"
+unset PW_SHARED_LIBC PW_MESA_ZINK_DIR PS4_NTDLL32_DLL PS4_KERNELBASE32_DLL PS4_IPHLPAPI32_DLL
+bash "$out/orbis/scripts/build-relocatable-wine-ps4.sh"
+python3 -I "$out/postlink_clean.py" run "$out"      # needs POSTLINK_PATH_MAP (title/postlink-path-map.example)

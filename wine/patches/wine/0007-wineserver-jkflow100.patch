@@ -1,0 +1,26 @@
+JkFlow 1.00 Wine PS4 runtime: wineserver: JkFlow 1.00 names and paths (thread.c)
+
+
+ server/thread.c
+---
+diff --git a/server/thread.c b/server/thread.c
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -346,7 +346,7 @@
+  * never runs while the CPUs are busy, and this scheduler has nothing like
+  * Windows' boost for starved threads. Nothing goes above 695, below the
+  * title's own threads. It is off unless WINE_PS5_SCHED=1 is set or the file
+- * /data/prospero-win/pw_sched exists. */
++ * /data/blurdev/pw_sched exists. */
+ static int ps5_scheduling;
+ 
+ void init_threading(void)
+@@ -354,7 +354,7 @@
+     const char *setting = getenv( "WINE_PS5_SCHED" );
+     struct stat st;
+ 
+-    ps5_scheduling = setting ? !strcmp( setting, "1" ) : !stat( "/data/prospero-win/pw_sched", &st );
++    ps5_scheduling = setting ? !strcmp( setting, "1" ) : !stat( "/data/blurdev/pw_sched", &st );
+ }
+ 
+ static int ps5_native_priority( int effective_priority )

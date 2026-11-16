@@ -1,0 +1,2335 @@
+Libraries bundled in Wine 11.17 (commit 490f6d5dcbb2a5047345b8af88d114bbcaad69a8,
+https://gitlab.winehq.org/wine/wine) and built into the Wine modules this package
+ships under win/wine/lib/wine/i386-windows/ and x86_64-windows/. Each licence file
+below is copied verbatim from that Wine source tree, libs/LIBRARY/. Wine's own
+summary of these and of its other imports is Wine-NOTICES.md.
+The LGPL-2.1 text that FFmpeg, FluidSynth, mpg123 and vkd3d refer to is LGPL-2.1.txt.
+
+==============================================================================
+Capstone: libs/capstone/LICENSE.TXT (used by winedbg.exe)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/capstone/LICENSE.TXT
+==============================================================================
+
+This is the software license for Capstone disassembly framework.
+Capstone has been designed & implemented by Nguyen Anh Quynh <aquynh@gmail.com>
+
+See http://www.capstone-engine.org for further information.
+
+Copyright (c) 2013, COSEINC.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+* Neither the name of the developer(s) nor the names of its
+  contributors may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
+Capstone: libs/capstone/LICENSE_LLVM.TXT (used by winedbg.exe)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/capstone/LICENSE_LLVM.TXT
+==============================================================================
+
+==============================================================================
+LLVM Release License
+==============================================================================
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2003-2013 University of Illinois at Urbana-Champaign.
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+Copyrights and Licenses for Third Party Software Distributed with LLVM:
+==============================================================================
+The LLVM software contains code written by third parties.  Such software will
+have its own individual LICENSE.TXT file in the directory in which it appears.
+This file will describe the copyrights, license, and restrictions which apply
+to that code.
+
+The disclaimer of warranty in the University of Illinois Open Source License
+applies to all code in the LLVM Distribution, and nothing in any of the
+other licenses gives permission to use the names of the LLVM Team or the
+University of Illinois to endorse or promote products derived from this
+Software.
+
+The following pieces of software have additional or alternate copyrights,
+licenses, and/or restrictions:
+
+Program             Directory
+-------             ---------
+Autoconf            llvm/autoconf
+                    llvm/projects/ModuleMaker/autoconf
+                    llvm/projects/sample/autoconf
+Google Test         llvm/utils/unittest/googletest
+OpenBSD regex       llvm/lib/Support/{reg*, COPYRIGHT.regex}
+pyyaml tests        llvm/test/YAMLParser/{*.data, LICENSE.TXT}
+ARM contributions   llvm/lib/Target/ARM/LICENSE.TXT
+md5 contributions   llvm/lib/Support/MD5.cpp llvm/include/llvm/Support/MD5.h
+
+==============================================================================
+LLVM libc++: libs/c++/LICENSE.TXT (used by icu.dll, dmsynth.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/c++/LICENSE.TXT
+==============================================================================
+
+==============================================================================
+libc++ License
+==============================================================================
+
+The libc++ library is dual licensed under both the University of Illinois
+"BSD-Like" license and the MIT license.  As a user of this code you may choose
+to use it under either license.  As a contributor, you agree to allow your code
+to be used under both.
+
+Full text of the relevant licenses is included below.
+
+==============================================================================
+
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2009-2019 by the contributors listed in CREDITS.TXT
+
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+
+Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+LLVM libc++abi: libs/c++abi/LICENSE.TXT (used by icu.dll, dmsynth.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/c++abi/LICENSE.TXT
+==============================================================================
+
+==============================================================================
+libc++abi License
+==============================================================================
+
+The libc++abi library is dual licensed under both the University of Illinois
+"BSD-Like" license and the MIT license.  As a user of this code you may choose
+to use it under either license.  As a contributor, you agree to allow your code
+to be used under both.
+
+Full text of the relevant licenses is included below.
+
+==============================================================================
+
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2009-2019 by the contributors listed in CREDITS.TXT
+
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+
+Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+LLVM libunwind: libs/unwind/LICENSE.TXT (used by with libc++abi)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/unwind/LICENSE.TXT
+==============================================================================
+
+==============================================================================
+libunwind License
+==============================================================================
+
+The libunwind library is dual licensed under both the University of Illinois
+"BSD-Like" license and the MIT license.  As a user of this code you may choose
+to use it under either license.  As a contributor, you agree to allow your code
+to be used under both.
+
+Full text of the relevant licenses is included below.
+
+==============================================================================
+
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2009-2019 by the contributors listed in CREDITS.TXT
+
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+
+Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+LLVM compiler-rt builtins: libs/compiler-rt/LICENSE.TXT (used by the PE modules of the two-architecture build)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/compiler-rt/LICENSE.TXT
+==============================================================================
+
+==============================================================================
+compiler_rt License
+==============================================================================
+
+The compiler_rt library is dual licensed under both the University of Illinois
+"BSD-Like" license and the MIT license.  As a user of this code you may choose
+to use it under either license.  As a contributor, you agree to allow your code
+to be used under both.
+
+Full text of the relevant licenses is included below.
+
+==============================================================================
+
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2009-2019 by the contributors listed in CREDITS.TXT
+
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+
+Copyright (c) 2009-2015 by the contributors listed in CREDITS.TXT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+Copyrights and Licenses for Third Party Software Distributed with LLVM:
+==============================================================================
+The LLVM software contains code written by third parties.  Such software will
+have its own individual LICENSE.TXT file in the directory in which it appears.
+This file will describe the copyrights, license, and restrictions which apply
+to that code.
+
+The disclaimer of warranty in the University of Illinois Open Source License
+applies to all code in the LLVM Distribution, and nothing in any of the
+other licenses gives permission to use the names of the LLVM Team or the
+University of Illinois to endorse or promote products derived from this
+Software.
+
+==============================================================================
+FAudio: libs/faudio/LICENSE (used by xaudio2_*.dll, x3daudio1_*.dll, xactengine*.dll, xapofx1_*.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/faudio/LICENSE
+==============================================================================
+
+/* FAudio - XAudio Reimplementation for FNA
+ *
+ * Copyright (c) 2011-2024 Ethan Lee, Luigi Auriemma, and the MonoGame Team
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software in a
+ * product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Ethan "flibitijibibo" Lee <flibitijibibo@flibitijibibo.com>
+ *
+ */
+
+==============================================================================
+FFmpeg 8.1.1 (subset): libs/ffmpeg/LICENSE.md (used by colorcnv.dll, iyuv_32.dll, msvproc.dll, resampledmo.dll, vidreszr.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/ffmpeg/LICENSE.md
+==============================================================================
+
+# License
+
+Most files in FFmpeg are under the GNU Lesser General Public License version 2.1
+or later (LGPL v2.1+). Read the file `COPYING.LGPLv2.1` for details. Some other
+files have MIT/X11/BSD-style licenses. In combination the LGPL v2.1+ applies to
+FFmpeg.
+
+Some optional parts of FFmpeg are licensed under the GNU General Public License
+version 2 or later (GPL v2+). See the file `COPYING.GPLv2` for details. None of
+these parts are used by default, you have to explicitly pass `--enable-gpl` to
+configure to activate them. In this case, FFmpeg's license changes to GPL v2+.
+
+Specifically, the GPL parts of FFmpeg are:
+
+- optional x86 optimization in the files
+    - `libavcodec/x86/flac_dsp_gpl.asm`
+    - `libavcodec/x86/idct_mmx.c`
+    - `libavfilter/x86/vf_removegrain.asm`
+- the following building and testing tools
+    - `compat/solaris/make_sunver.pl`
+    - `doc/t2h.pm`
+    - `doc/texi2pod.pl`
+    - `libswresample/tests/swresample.c`
+    - `tests/checkasm/*`
+    - `tests/tiny_ssim.c`
+- the following filters in libavfilter:
+    - `signature_lookup.c`
+    - `vf_blackframe.c`
+    - `vf_boxblur.c`
+    - `vf_colormatrix.c`
+    - `vf_cover_rect.c`
+    - `vf_cropdetect.c`
+    - `vf_delogo.c`
+    - `vf_eq.c`
+    - `vf_find_rect.c`
+    - `vf_fspp.c`
+    - `vf_histeq.c`
+    - `vf_hqdn3d.c`
+    - `vf_kerndeint.c`
+    - `vf_lensfun.c` (GPL version 3 or later)
+    - `vf_mcdeint.c`
+    - `vf_mpdecimate.c`
+    - `vf_nnedi.c`
+    - `vf_owdenoise.c`
+    - `vf_perspective.c`
+    - `vf_phase.c`
+    - `vf_pp7.c`
+    - `vf_pullup.c`
+    - `vf_repeatfields.c`
+    - `vf_sab.c`
+    - `vf_signature.c`
+    - `vf_smartblur.c`
+    - `vf_spp.c`
+    - `vf_stereo3d.c`
+    - `vf_super2xsai.c`
+    - `vf_tinterlace.c`
+    - `vf_uspp.c`
+    - `vf_vaguedenoiser.c`
+    - `vsrc_mptestsrc.c`
+
+Should you, for whatever reason, prefer to use version 3 of the (L)GPL, then
+the configure parameter `--enable-version3` will activate this licensing option
+for you. Read the file `COPYING.LGPLv3` or, if you have enabled GPL parts,
+`COPYING.GPLv3` to learn the exact legal terms that apply in this case.
+
+There are a handful of files under other licensing terms, namely:
+
+* The files `libavcodec/jfdctfst.c`, `libavcodec/jfdctint_template.c` and
+  `libavcodec/jrevdct.c` are taken from libjpeg, see the top of the files for
+  licensing details. Specifically note that you must credit the IJG in the
+  documentation accompanying your program if you only distribute executables.
+  You must also indicate any changes including additions and deletions to
+  those three files in the documentation.
+* `tests/reference.pnm` is under the expat license.
+
+
+## External libraries
+
+FFmpeg can be combined with a number of external libraries, which sometimes
+affect the licensing of binaries resulting from the combination.
+
+### Compatible libraries
+
+The following libraries are under GPL version 2:
+- avisynth
+- frei0r
+- libcdio
+- libdavs2
+- librubberband
+- libvidstab
+- libx264
+- libx265
+- libxavs
+- libxavs2
+- libxvid
+
+When combining them with FFmpeg, FFmpeg needs to be licensed as GPL as well by
+passing `--enable-gpl` to configure.
+
+The following libraries are under LGPL version 3:
+- gmp
+- libaribb24
+- liblensfun
+
+When combining them with FFmpeg, use the configure option `--enable-version3` to
+upgrade FFmpeg to the LGPL v3.
+
+The VMAF, mbedTLS, RK MPI, OpenCORE and VisualOn libraries are under the Apache License
+2.0. That license is incompatible with the LGPL v2.1 and the GPL v2, but not with
+version 3 of those licenses. So to combine these libraries with FFmpeg, the
+license version needs to be upgraded by passing `--enable-version3` to configure.
+
+The smbclient library is under the GPL v3, to combine it with FFmpeg,
+the options `--enable-gpl` and `--enable-version3` have to be passed to
+configure to upgrade FFmpeg to the GPL v3.
+
+### Incompatible libraries
+
+There are certain libraries you can combine with FFmpeg whose licenses are not
+compatible with the GPL and/or the LGPL. If you wish to enable these
+libraries, even in circumstances that their license may be incompatible, pass
+`--enable-nonfree` to configure. This will cause the resulting binary to be
+unredistributable.
+
+The Fraunhofer FDK AAC and OpenSSL libraries are under licenses which are
+incompatible with the GPLv2 and v3. To the best of our knowledge, they are
+compatible with the LGPL.
+
+==============================================================================
+FluidSynth: libs/fluidsynth/COPYING.md (used by dmsynth.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/fluidsynth/COPYING.md
+==============================================================================
+
+The source code for FluidSynth is distributed under the terms of the
+[GNU Lesser General Public License](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html),
+see the [LICENSE](https://github.com/FluidSynth/fluidsynth/blob/master/LICENSE) file.
+
+To better understand the conditions how FluidSynth can be used in
+e.g. commercial or closed-source projects, please refer to the
+[LicensingFAQ in our wiki](https://github.com/FluidSynth/fluidsynth/wiki/LicensingFAQ).
+
+==============================================================================
+FluidSynth: libs/fluidsynth/AUTHORS (used by dmsynth.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/fluidsynth/AUTHORS
+==============================================================================
+
+[:Team:]
+Current development team
+
+Tom Moebert
+
+
+Former development team
+
+Josh Green
+Pedro Lopez-Cabanillas
+David Henningsson
+
+
+[:Idea:]
+
+* Samuel Bianchini, Peter Hanappe and Johnathan Lee
+
+
+[:Development:]
+
+Many people contributed to FluidSynth, sent suggestions or bug
+fixes. The project was started by Peter Hanappe who is the main
+author. Josh Green is the current maintainer. Below you'll find a
+summary of contributions.
+
+
+* Peter Hanappe. Initiated the project. files: stuck his nose in all
+  files.
+
+* Josh Green is the former maintainer and contributed a lot of code
+  directly or indirectly through the Swami and Smurf code base.
+  The SoundFont loader is completely based on his code. He also wrote
+  the alsa sequencer driver. He made many changes and bug fixes,
+  but above all, he's one of the driving forces behind the synthesizer.
+  He also created the current FluidSynth graphic logo with Blender
+  (the blue waves with FluidSynth letters partially submerged).
+
+* Markus Nentwig (re-)designed the resonant filter, the chorus, the
+  LADSPA subsystem, the MIDI router, optimized for SSE, made many
+  changes and bug fixes and got the synthesizer to actually work. Most
+  importantly, he used it on stage to make music.
+
+* S. Christian Collins provided many tests and fixes on EMU10K1
+  compatibility. He also supplied reference chorus and reverb settings for
+  developing the default ones.
+
+* Alberto Salvia Novella developed the default chorus and reverb settings.
+
+* Stephane Letz from Grame wrote most of the MidiShare driver, all of
+  the PortAudio driver, ported iiwusynth to MacOS X, and sent in many
+  fixes. files: iiwu_midishare.c, iiwu_portaudio.c
+
+* Antoine Schmitt added the sequencer support, support for sample
+  loading (RAM Sfont), developed the
+  MacroMedia Director Xtra, and send in many many bug reports. Thanks
+  to Antoine, the synthesizer finds its way to multi-media
+  developers. files: in bindings/director/ and iiwu_seq.{c,h},
+  iiwu_event.{c,h}, iiwu_event_priv.h, iiwu_seqbind.{c,h},
+  iiwu_ramsfont.{c,h}
+
+* Bob Ham added the code for "bank select" MIDI messages and send code
+  to define the synth's ALSA sequencer client name. files:
+  iiwu_midi.c, iiwu_alsa.c, iiwusynth.c, iiwusynth.h.
+
+* Tim Goetze sent many patches and implemented the all_notes_off. He
+  also sent his code for the new ALSA driver. files: iiwu_synth.c,
+  iiwu_chan.c, iiwu_voice.c, iiwu_alsa.c
+
+* Norbert Schnell from Ircam's jMax Team wrote most of the jMax/FTS
+  interface in a record time. He also pointed me to the technique of
+  using a lookup table for the interpolation coefficients.  file:
+  iiwu_fts.c, iiwu_synth.c
+
+* The initial alsa driver was based on the jMax alsa driver by
+  Francois Dechelle and his Real-time Team at Ircam
+  (https://www.ircam.fr/jmax). The jMax code was based upon Ardour's
+  alsa_device.cc by Paul Barton-Davis.  file: iiwu_alsa.c
+
+* Code was borrowed from the glib library to the smurf files. The goal was
+  to make iiwusynth independent from any library for maximum
+  portability.
+
+* David Henningsson added code for fast rendering of MIDI files,
+  rewrote the thread safety for 1.1.2, and fixed many bugs.
+
+* The midi device uses code from jMax's alsarawmidi.c file and from
+  Smurf's midi_alsaraw.c by Josh Green.  file: iiwu_alsa.c
+
+* The reverb algorithm was written by Jezar
+  (https://www.dreampoint.co.uk). His code is public domain. The code
+  was translated to C by Peter Hanappe.  file: iiwu_synth.c
+
+* The original code for the chorus effect was written by Juergen
+  Mueller and sundry contributors.
+
+* Bob Ham added LADCCA support.
+
+* Ebrahim Mayat made big efforts for compiling and running FluidSynth
+  on MacOS X. He also wrote the README-OSX file.
+
+* Martin Uddén's midi package was used. His files are integrated into
+  the iiwu_midi file. Martin Uddén <nanook@lysator.liu.se> file:
+  iiwu_midi.c
+
+* Ken Ellinwood send in a patch to add bank offsets to SoundFonts. An
+  adapted version was integrated in the source code. files:
+  fluid_cmd.c, fluidsynth/synth.h, fluid_synth.c.
+
+* Some interpolation algorithms were used that were found in
+  the music-dsp archives (http://www.smartelectronix.com/musicdsp).
+  They were written by Joshua Scholar and others.  file: iiwu_synth.c
+
+* Macros to {increment,decrement} the 64-bit fixed point phase were
+  borrowed from Mozilla's macros to handle the Long-long type (64-bit
+  signed integer type). Mozilla NSPR library, www.mozilla.org.  file:
+  iiwu_phase.h
+
+* KO Myung-Hun for OS/2 support with Dart audio driver.
+
+* Pedro Lopez-Cabanillas wrote the CoreMIDI driver for MacOSX, the CMake based
+  build system, revised the doxygen documentation, sequencer examples, fixes.
+
+* Matt Giuca improved the midi player by letting it load midi files from RAM,
+  and by making it handle EOT events.
+
+* Tom Moebert (fluidsynth's maintainer since Jun 2017) cleaned up and refactored
+  fluidsynth's API and revised its documentation, added support for 24 bit sample
+  soundfonts, added support for DLS soundfonts, fixed various bugs, implemented
+  unit tests and CI builds for Windows, Linux, MacOSX and BSD.
+
+* Fabian Greffrath added initial support of vorbis-compressed sf3 sound fonts.
+
+* Growing list of individuals who contributed bug fixes, corrections and minor features:
+Nicolas Boulicault for ALSA sequencer midi.portname setting.
+Werner Schweer
+Dave Philips
+Anthony Green
+Jake Commander
+Fernando Pablo Lopez-Lezcano
+Raoul Bonisch
+Sergey Pavlishin
+Eric Van Buggenhaut
+Ken Ellinwood
+Takashi Iwai
+Bob Ham
+Gerald Pye
+Rui Nuno Capela
+Frieder Bürzele
+Henri Manson
+Mihail Zenkov
+Paul Millar
+Nick Daly
+David Hilvert
+Bernat Arlandis i Mañó
+Sven Meier
+Marcus Weseloh
+Jean-jacques Ceresa
+Vladimir Davidovich
+Tamás Korodi
+Evan Miller
+
+==============================================================================
+GSM 06.10: libs/gsm/COPYRIGHT (used by msgsm32.acm)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/gsm/COPYRIGHT
+==============================================================================
+
+Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+Technische Universitaet Berlin
+
+Any use of this software is permitted provided that this notice is not
+removed and that neither the authors nor the Technische Universitaet Berlin
+are deemed to have made any representations as to the suitability of this
+software for any purpose nor are held responsible for any defects of
+this software.  THERE IS ABSOLUTELY NO WARRANTY FOR THIS SOFTWARE.
+
+As a matter of courtesy, the authors request to be informed about uses
+this software has found, about bugs in this software, and about any
+improvements that may be of general interest.
+
+Berlin, 28.11.1994
+Jutta Degener
+Carsten Bormann
+
+                                 oOo
+
+Since the original terms of 15 years ago maybe do not make our
+intentions completely clear given today's refined usage of the legal
+terms, we append this additional permission:
+
+      Permission to use, copy, modify, and distribute this software
+      for any purpose with or without fee is hereby granted,
+      provided that this notice is not removed and that neither
+      the authors nor the Technische Universitaet Berlin are
+      deemed to have made any representations as to the suitability
+      of this software for any purpose nor are held responsible
+      for any defects of this software.  THERE IS ABSOLUTELY NO
+      WARRANTY FOR THIS SOFTWARE.
+
+Berkeley/Bremen, 05.04.2009
+Jutta Degener
+Carsten Bormann
+
+==============================================================================
+ICU common: libs/icucommon/LICENSE (used by icu.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/icucommon/LICENSE
+==============================================================================
+
+UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE
+
+See Terms of Use <https://www.unicode.org/copyright.html>
+for definitions of Unicode Inc.’s Data Files and Software.
+
+NOTICE TO USER: Carefully read the following legal agreement.
+BY DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING UNICODE INC.'S
+DATA FILES ("DATA FILES"), AND/OR SOFTWARE ("SOFTWARE"),
+YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE
+THE DATA FILES OR SOFTWARE.
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2022 Unicode, Inc. All rights reserved.
+Distributed under the Terms of Use in https://www.unicode.org/copyright.html.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Unicode data files and any associated documentation
+(the "Data Files") or Unicode software and any associated documentation
+(the "Software") to deal in the Data Files or Software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files
+or Software are furnished to do so, provided that either
+(a) this copyright and permission notice appear with all copies
+of the Data Files or Software, or
+(b) this copyright and permission notice appear in associated
+Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS
+NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale,
+use or other dealings in these Data Files or Software without prior
+written authorization of the copyright holder.
+
+----------------------------------------------------------------------
+
+Third-Party Software Licenses
+
+This section contains third-party software notices and/or additional
+terms for licensed third-party software components included within ICU
+libraries.
+
+----------------------------------------------------------------------
+
+ICU License - ICU 1.8.1 to ICU 57.1
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright (c) 1995-2016 International Business Machines Corporation and others
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, provided that the above
+copyright notice(s) and this permission notice appear in all copies of
+the Software and that both the above copyright notice(s) and this
+permission notice appear in supporting documentation.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY
+SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER
+RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
+CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale, use
+or other dealings in this Software without prior written authorization
+of the copyright holder.
+
+All trademarks and registered trademarks mentioned herein are the
+property of their respective owners.
+
+----------------------------------------------------------------------
+
+==============================================================================
+ICU i18n: libs/icui18n/LICENSE (used by icu.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/icui18n/LICENSE
+==============================================================================
+
+UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE
+
+See Terms of Use <https://www.unicode.org/copyright.html>
+for definitions of Unicode Inc.’s Data Files and Software.
+
+NOTICE TO USER: Carefully read the following legal agreement.
+BY DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING UNICODE INC.'S
+DATA FILES ("DATA FILES"), AND/OR SOFTWARE ("SOFTWARE"),
+YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE
+THE DATA FILES OR SOFTWARE.
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2022 Unicode, Inc. All rights reserved.
+Distributed under the Terms of Use in https://www.unicode.org/copyright.html.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Unicode data files and any associated documentation
+(the "Data Files") or Unicode software and any associated documentation
+(the "Software") to deal in the Data Files or Software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files
+or Software are furnished to do so, provided that either
+(a) this copyright and permission notice appear with all copies
+of the Data Files or Software, or
+(b) this copyright and permission notice appear in associated
+Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS
+NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale,
+use or other dealings in these Data Files or Software without prior
+written authorization of the copyright holder.
+
+----------------------------------------------------------------------
+
+Third-Party Software Licenses
+
+This section contains third-party software notices and/or additional
+terms for licensed third-party software components included within ICU
+libraries.
+
+----------------------------------------------------------------------
+
+ICU License - ICU 1.8.1 to ICU 57.1
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright (c) 1995-2016 International Business Machines Corporation and others
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, provided that the above
+copyright notice(s) and this permission notice appear in all copies of
+the Software and that both the above copyright notice(s) and this
+permission notice appear in supporting documentation.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY
+SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER
+RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
+CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale, use
+or other dealings in this Software without prior written authorization
+of the copyright holder.
+
+All trademarks and registered trademarks mentioned herein are the
+property of their respective owners.
+
+----------------------------------------------------------------------
+
+Google double-conversion
+
+Copyright 2006-2011, the V8 project authors. All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+    * Neither the name of Google Inc. nor the names of its
+      contributors may be used to endorse or promote products derived
+      from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----------------------------------------------------------------------
+
+==============================================================================
+libjpeg (Independent JPEG Group): libs/jpeg/LICENSE (used by windowscodecs.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/jpeg/LICENSE
+==============================================================================
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+This software is copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+==============================================================================
+JPEG XR (jxrlib): libs/jxr/LICENSE (used by wmphoto.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/jxr/LICENSE
+==============================================================================
+
+Copyright © Microsoft Corp.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+• Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+• Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
+Little CMS 2: libs/lcms2/COPYING (used by mscms.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/lcms2/COPYING
+==============================================================================
+
+Little CMS
+Copyright (c) 1998-2020 Marti Maria Saguer
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the 
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to 
+permit persons to whom the Software is furnished to do so, subject
+to the following conditions:
+
+The above copyright notice and this permission notice shall be 
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+Little CMS 2: libs/lcms2/AUTHORS (used by mscms.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/lcms2/AUTHORS
+==============================================================================
+
+
+Main Author
+------------
+Marti Maria 
+
+
+Contributors 
+------------
+Bob Friesenhahn 
+Kai-Uwe Behrmann
+Stuart Nixon
+Jordi Vilar
+Richard Hughes
+Auke Nauta
+Chris Evans (Google)
+Lorenzo Ridolfi 
+Robin Watts (Artifex)
+Shawn Pedersen 
+Andrew Brygin 
+Samuli Suominen 
+Florian Höch
+Aurelien Jarno 
+Claudiu Cebuc
+Michael Vhrel (Artifex)
+Michal Cihar 
+Daniel Kaneider 
+Mateusz Jurczyk (Google)
+Paul Miller
+Sébastien Léon
+Christian Schmitz
+XhmikosR
+Stanislav Brabec (SuSe)
+Leonhard Gruenschloss (Google)
+Patrick Noffke
+Christopher James Halse Rogers
+John Hein
+Thomas Weber (Debian)
+Mark Allen
+Noel Carboni
+Sergei Trofimovic
+Philipp Knechtges
+Amyspark
+Lovell Fuller
+Eli Schwartz
+Diogo Teles Sant'Anna
+Vlad Erium
+
+Special Thanks 
+--------------
+Artifex software
+AlienSkin software
+libVIPS
+Jan Morovic
+Jos Vernon (WebSupergoo)
+Harald Schneider (Maxon)
+Christian Albrecht 
+Dimitrios Anastassakis 
+Lemke Software 
+Tim Zaman
+Amir Montazery and Open Source Technology Improvement Fund (ostif.org), Google, for fuzzer fundings.
+
+==============================================================================
+OpenLDAP: libs/ldap/COPYRIGHT (used by wldap32.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/ldap/COPYRIGHT
+==============================================================================
+
+Copyright 1998-2024 The OpenLDAP Foundation
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted only as authorized by the OpenLDAP
+Public License.
+
+A copy of this license is available in the file LICENSE in the
+top-level directory of the distribution or, alternatively, at
+<http://www.OpenLDAP.org/license.html>.
+
+OpenLDAP is a registered trademark of the OpenLDAP Foundation.
+
+Individual files and/or contributed packages may be copyright by
+other parties and/or subject to additional restrictions.
+
+This work is derived from the University of Michigan LDAP v3.3
+distribution.  Information concerning this software is available
+at <http://www.umich.edu/~dirsvcs/ldap/ldap.html>.
+
+This work also contains materials derived from public sources.
+
+Additional information about OpenLDAP can be obtained at
+<http://www.openldap.org/>.
+
+---
+
+Portions Copyright 1998-2013 Kurt D. Zeilenga.
+Portions Copyright 1998-2006 Net Boolean Incorporated.
+Portions Copyright 2001-2006 IBM Corporation.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted only as authorized by the OpenLDAP
+Public License.
+
+---
+
+Portions Copyright 1999-2008 Howard Y.H. Chu.
+Portions Copyright 1999-2008 Symas Corporation.
+Portions Copyright 1998-2003 Hallvard B. Furuseth.
+Portions Copyright 2007-2011 Gavin Henry.
+Portions Copyright 2007-2011 Suretec Systems Ltd.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that this notice is preserved.
+The names of the copyright holders may not be used to endorse or
+promote products derived from this software without their specific
+prior written permission.  This software is provided ``as is''
+without express or implied warranty.
+
+---
+
+Portions Copyright (c) 1992-1996 Regents of the University of Michigan.
+All rights reserved.
+
+Redistribution and use in source and binary forms are permitted
+provided that this notice is preserved and that due credit is given
+to the University of Michigan at Ann Arbor.  The name of the
+University may not be used to endorse or promote products derived
+from this software without specific prior written permission.  This
+software is provided ``as is'' without express or implied warranty.
+
+==============================================================================
+OpenLDAP: libs/ldap/LICENSE (used by wldap32.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/ldap/LICENSE
+==============================================================================
+
+The OpenLDAP Public License
+  Version 2.8, 17 August 2003
+
+Redistribution and use of this software and associated documentation
+("Software"), with or without modification, are permitted provided
+that the following conditions are met:
+
+1. Redistributions in source form must retain copyright statements
+   and notices,
+
+2. Redistributions in binary form must reproduce applicable copyright
+   statements and notices, this list of conditions, and the following
+   disclaimer in the documentation and/or other materials provided
+   with the distribution, and
+
+3. Redistributions must contain a verbatim copy of this document.
+
+The OpenLDAP Foundation may revise this license from time to time.
+Each revision is distinguished by a version number.  You may use
+this Software under terms of this license revision or under the
+terms of any subsequent revision of the license.
+
+THIS SOFTWARE IS PROVIDED BY THE OPENLDAP FOUNDATION AND ITS
+CONTRIBUTORS ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT
+SHALL THE OPENLDAP FOUNDATION, ITS CONTRIBUTORS, OR THE AUTHOR(S)
+OR OWNER(S) OF THE SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+The names of the authors and copyright holders must not be used in
+advertising or otherwise to promote the sale, use or other dealing
+in this Software without specific, written prior permission.  Title
+to copyright in this Software shall at all times remain with copyright
+holders.
+
+OpenLDAP is a registered trademark of the OpenLDAP Foundation.
+
+Copyright 1999-2003 The OpenLDAP Foundation, Redwood City,
+California, USA.  All Rights Reserved.  Permission to copy and
+distribute verbatim copies of this document is granted.
+
+==============================================================================
+mpg123: libs/mpg123/LICENSE (used by mp3dmod.dll, l3codeca.acm)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/mpg123/LICENSE
+==============================================================================
+
+This is the file that contains the terms of use, copying, etc. for the mpg123 distribution package.
+
+Main message, to include in "About ..." boxes, etc:
+
+	Copyright (c) 1995-2020 by Michael Hipp and others,
+	free software under the terms of the LGPL v2.1
+
+There is an attempt to cover the actual list of authors in the AUTHORS file.
+Project maintainer since 2006 is Thomas Orgis and many people have contributed
+since the Michael Hipp era, but he stays the initial source and it would
+be impractical to count them all individually, so it's "and others".
+Source files contain the phrase "the mpg123 project" to the same effect
+in their license boilerplate; especially those that were added after
+maintainership changed. The person mainly responsible for the first version
+is usually named in the phrase "initially written by ...".
+
+All files in the distribution that don't carry a license note on their own are
+licensed under the terms of the LGPL 2.1; exceptions may apply, especially to
+files not in the official distribution but in the revision control repository.
+
+==============================================================================
+mpg123: libs/mpg123/AUTHORS (used by mp3dmod.dll, l3codeca.acm)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/mpg123/AUTHORS
+==============================================================================
+
+This is an attempt to give credit to the people who contributed in some way to the mpg123 project.
+There are names and email addresses listed. Please use these addresses only to contact contributors with some question about their mpg123 contribution.
+You are explicitly not allowed to send them unwanted business offers or to question the quality of their sex life.
+--------------------
+
+Being on the list of contributing authors not necessarily means that there
+is significant copyright in parts of the source code. There are obviously
+contributions of differing complexity. I try to mention people who motivated
+changes at least by suggesting some definite code changes, even if their
+code did not enter the mpg123 source verbatim. Trivial changes like pointing
+out ovbious syntax errors that make compilers cry do not land here.
+
+--------------------
+
+Current maintainers with various sorts of contributions:
+	Thomas Orgis <thomas@orgis.org>
+	Taihei Momma <tmkk@mac.com>
+
+Past maintainers mainly for MS Windows platform:
+	Patrick Dehne <patrick@steidle.net>
+	Jonathan Yong <10walls@gmail.com>
+
+Co-initiator of the revived mpg123 project, but not that involved anymore:
+	Nicholas J Humfrey <njh@ecs.soton.ac.uk>
+
+Special thanks go to Taihei, the person who keeps the assembly optimisations alive
+and takes care of portability to OSX/iOS platforms.
+
+Generic address pointing to the current maintainer (hopefully still works in future in case maintainership will change again): <maintainer@mpg123.org>
+
+The creator: Michael Hipp (email: hippm@informatik.uni-tuebingen.de - please bother maintainers first)
+
+Contributions/ideas Thomas Orgis era (includes backports from mhipp trunk):
+
+Bill Roberts <bill.roberts@arm.com>: PAC/BTI for aarch64
+Dave Yeo <dave.r.yeo@gmail.com>: continued OS/2 fixing
+madebr and manx: github mirror and CI
+Vitaly Kirsanov <krokoziabla@gmail.com>: ports/cmake (optional CMake build)
+Won-Kyu Park <wkpark@gmail.com>: patch to get rid of asm textrels (x86 PIC)
+Michael Weiser <michaelweiser@users.sf.net>: update of coreaudio output to AudioComponents API
+Bent Bisballe Nyeng <bbn@dynastrom.com>: patch for MPG123_NO_PEEK_END and MPG123_FORCE_SEEKABLE
+Eric S. Raymond <esr@thyrsus.com>: man page fixes
+Tobias Weber <tobiw@suprafluid.com>: patch for --disable-equalizer
+Hans de Goede <j.w.r.degoede@gmail.com>: patch to skip APE tags
+Stephan Vedder <stephan.vedder@gmail.com>: MSVC++ 2013 port update
+Rajeev V. Pillai <rajeevvp@users.sf.net>: pointing out/patching issues in HTTP code and behaviour of mpg123 remote/terminal control
+Jarno Lehtinen <lehtinen@sci.fi>: tinyalsa output
+Anthony Wells <borgboyone@yahoo.com>: initial version of ID3v2 APIC patch
+David Wohlferd <limegreensocks@yahoo.com>: Win32 WaveOut buffer destructor fix.
+Mike Gorchak <mike.gorchak.qnx@gmail.com>: QNX native audio output (QSA)
+Dan McGee <dpmcgee@gmail.com>: various patches (also for test suite)
+Jonathan Yong (jon_y) <10walls@gmail.com>: win32 hacking, win32 wasapi audio.
+Malcolm Boczek <MBoczek@terraindustries.com>: Common language runtime wrapper
+Elbert Pol (TeLLie) <elbert.pol@gmail.com>: OS/2 port fixup
+Jeroen Valkonet <jvalkon@xs4all.nl>: motivate pitch control, suggestive patch for pitch command in generic control interface
+Andy Hefner <ahefner@gmail.com>: patch for that second UTF16 issue
+Taihei Monma <tmkk@mac.com>: A whole lot of new/improved assembler code, including Altivec!
+Christian Weisgerber <naddy@openbsd.org>, Brad Smith: sndio output
+Patrick Dehne (P4tr3ck) <patrick@steidle.net>: more MSVC++ porting, patch to handle missing bit reservoirs
+Thorsten Glaser <tg@mirbsd.de>: icy2utf8, suggest utf8 locale stuff
+Dan Smith <dan@algenta.com>: ABI fixes for ensuring stack alignment (esp. for MinGW-built DLL with MSVC)
+Michael Ryzhykh <mclroy@gmail.com>: mpg123.spec.in
+Stefan Lenselink <Stefan@lenselink.org>: initial aRts output
+Sergej Kvachonok <ravenexp@gmail.com>: win32 audio rewrite
+Winston: SunOS-4.1.4/gcc-2.7.0 testing and suggestions for fixes (legacy Makefile, integer type headers)
+Mika Tiainen: pointing out the fix for the UTF to ASCII filtering of tags to actually work
+Nick Kurshev <nickols_k@mail.ru>: extended 3dnow (from mplayer)
+Zuxy Meng <zuxy.meng@gmail.com>: SSE (from mplayer)
+Honza <cundrak@quick.cz>: idea and prototype patch for ICY meta data support
+Petr Baudis <pasky@ucw.cz>: patches: term sigcont, id3 display unicode fallback and condensed output
+Petr Salinger <Petr.Salinger@seznam.cz>: i486 enhancement
+mpdavig@users.sourceforge.net: linux-ppc-nas Makefile.legacy entry
+Adrian Bacon <adrian.bacon@xs4all.nl>: patched decode_i586_dither (noise shaped float/int rounding)
+Cool Feet Audio project <nutcase@dtfm.org>: realtime equalizer control
+Steve Grundell <www@grundell.u-net.com>: clean stdout in control mode with stdout decoding
+Romain Dolbeau <romain@dolbeau.org>: Altivec support (taken from mplayer)
+higway <higway@mednet.md>: MMX Patch
+Clemens Ladisch <clemens@ladisch.de>: ALSA 0.9/1.0 support
+
+Debian Daniel Kobras <kobras@debian.org> era:
+
+Steve Kemp <skx@debian.org>
+Dan Olson <theoddone33@icculus.org>
+Syuuhei Kashiyama <squash@mb.kcom.ne.jp>
+Rupert Levene <rupert.debian@hotpop.com>
+Andreas Dilger <adilger@turbolinux.com>
+Erik B. Andersen <andersee@debian.org>
+Chris Butler <chrisb@debian.org>
+Martin Sjogren <md9ms@mdstud.chalmers.se>
+Chet Hosey <chosey@budapress.com>
+Roland Rosenfeld <roland@spinnaker.de>
+
+
+Debian Colin Watson <cjwatson@debian.org> era:
+
+Helge Deller <deller@gmx.de>
+Chet Hosey <chosey@budapress.com>
+Christopher C. Chimelis <chris@debian.org>
+Roland Rosenfeld <roland@spinnaker.de>
+Marcelo E. Magallon <mmagallo@debian.org>
+
+
+Initial Debianers:
+
+Tommi Virtanen <tv@debian.org>
+Paul Haggart <phaggart@debian.org>
+
+
+Contributions/ideas Michael Hipp era:
+
+Mikko Tommila: DCT9
+Oliver Fromme <oliver.fromme@heim3.tu-clausthal.de>
+MPEG Software Simulation Group: reference decoder package
+Tobias Bading: idea for DCT64 in subband synthesis from maplay package
+Jeff Tsay and Mikko Tommila: MDCT36 from maplay package
+Philipp Knirsch <phil@mpik-tueb.mpg.de>: DCT36/manual unroll idea
+Thomas Woerner: SGI Audio
+Damien Clermonte: HP-UX audio fixes
+Niclas Lindstrom <nil@wineasy.se>: OS2 port
+Stefan Bieschewski <stb@acm.org>: Pentium optimizations, decode_i586.s
+Martin Denn <mdenn@unix-ag.uni-kl.de>: NAS port
+Niklas Beisert <nbeisert@physik.tu-muenchen.de>: MPEG 2.5 tables
+<mycroft@NetBSD.ORG> and <augustss@cs.chalmers.se>: NetBSD Patch(es)
+Kevin Brintnall <kbrint@visi.com>: BSD patch
+Tony Million: win32 port
+Steven Tiger Lang: advanced shuffle
+Eric B. Mitchell: esd port
+Ryan R. Prosser <prosser@geocities.com>: esd port for Solaris
+Andreas Neuhaus: initial generic control interface
+
+(additionally fetched from changelog:)
+
+Ralf Hildebrandt <R.Hildebrandt@TU-BS.DE>: audio_alib changes
+<sms@moe.2bsd.com>: BSDOS 4.0 with gcc added to Makefile
+Bertrand Petit <elrond@phoe.netdev.net>: frontend changes
+Erik Mouw <J.A.K.Mouw@its.tudelft.nl>: SGI audio fix for non RAD machines
+Daniel O'Connor <darius@guppy.dons.net.au>: freebsd-esd make-entry
+D. Skarda <0rfelyus@atrey.karlin.mff.cuni.cz>: enhanced head_check
+Wilson, Jeff D <jeff.wilson@wilcom.com>: xterm-title
+Robert Bihlmeyer <robbe@orcus.priv.at>: esd changes
+Hannu Napari's <Hannu.Napari@hut.fi>: SGI audio patches
+<Juergen.Schoew@unix-ag.uni-siegen.de>: native AIX support
+<psst@euskalnet.net>: playlist patch
+Gilles Zunino <Gilles.Zunino@hei.fupl.asso.fr>: SGI audio patches
+Matthew Parslow <roy@alpha.alphalink.com.au>: esdserver patch
+<dlux@dlux.sch.bme.hu>: equalizer patch (equalfile setting)
+Ducroquet Erwan <ducroque@ufr-info-p7.ibp.fr>: HPUX/ALib support
+Shane Wegner <shane@CM.NU>: genrepatch
+Samuel Audet <guardia@step.polymtl.ca>: wav-File patch
+"J. Dean Brederson" <jdb@cs.utah.edu>: SGI-RAD support
+Chou Ye-chi <is84002@cis.nctu.edu.tw>: sajberplay/FreeBSD patch
+Fabrice Bellard <bellard@email.enst.fr>: 486 optimizations
+A. Hermansen <ahermans@vf.telia.no> and J. Kysela <perex@jcu.cz>: ALSA output
+KIMURA Takuhiro <kim@hannah.ipc.miyakyo-u.ac.jp>: K6-3DNow
+Petr Stehlik <stehlik@cas3.zlin.vutbr.cz>: MINT
+Andy <andy@snoogie.demon.co.uk>: float2int speed up proposal
+Brian Foutz <foutz@anise.ee.cornell.edu>: TK3Play
+Thomas Niederreiter <tn@tarantel.rz.fh-muenchen.de>: RIFF header fix
+Stefan Gybas <cab@studbox.uni-stuttgart.de>: m68k patch 
+Grant Erickson <eric0139@tc.umn.edu>: Linux PPC patch
+Peter Berger <peterb@hoopoe.psc.edu>: BSDi patch 
+Henrik P Johnson <king@one.se>: HTTP auth
+Steven Tiger Lang <tiger@tyger.org>: advanced shuffle
+"Brian J. Swetland" <swetland@uiuc.edu>: front-end (remote) patch
+<leo@zycad.com>
+Tillmann Steinbrecher <tst@gmx.de>: shuffle patch
+M.Stekelenburg <m.stekelenburg@student.utwente.nl>: i386-getbits
+Antti Andreimann <anttix@cyberix.edu.ee>: outburst patch
+Hur TaeSung <saturn@arari.snu.ac.kr>: 'http accept' patch 
+
+(from post-0.59 changes that yet have to go into new trunk:)
+
+Hans Schwengeler <schweng@astro.unibas.ch>: audio_dec additions
+Wojciech Barañski's Mp3Play (check the tools folder): Mp3Play frontend
+Daniel Koukola: audio_oss.c patch
+Munechika SUMIKAWA <sumikawa@ebina.hitachi.co.jp>: IPv6
+TEMNOTA <temnota@kmv.ru>: HTTP,FTP patch/playlist fix
+Peter Surda <shurdeek@panorama.sth.ac.at>: VBR patch
+Ben <ben@blaukopf.com>: ARM startup time improvements 
+Dave MacKenzie <djm@pix.net>: init_output() patch
+pasky's <pasky@ju.cz>: close-on-stop patch
+
+==============================================================================
+musl 1.2.3 (math and string parts): libs/musl/COPYRIGHT (used by msvcrt.dll, ucrtbase.dll, msvcr*.dll, crtdll.dll, ntdll.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/musl/COPYRIGHT
+==============================================================================
+
+musl as a whole is licensed under the following standard MIT license:
+
+----------------------------------------------------------------------
+Copyright © 2005-2020 Rich Felker, et al.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+----------------------------------------------------------------------
+
+Authors/contributors include:
+
+A. Wilcox
+Ada Worcester
+Alex Dowad
+Alex Suykov
+Alexander Monakov
+Andre McCurdy
+Andrew Kelley
+Anthony G. Basile
+Aric Belsito
+Arvid Picciani
+Bartosz Brachaczek
+Benjamin Peterson
+Bobby Bingham
+Boris Brezillon
+Brent Cook
+Chris Spiegel
+Clément Vasseur
+Daniel Micay
+Daniel Sabogal
+Daurnimator
+David Carlier
+David Edelsohn
+Denys Vlasenko
+Dmitry Ivanov
+Dmitry V. Levin
+Drew DeVault
+Emil Renner Berthing
+Fangrui Song
+Felix Fietkau
+Felix Janda
+Gianluca Anzolin
+Hauke Mehrtens
+He X
+Hiltjo Posthuma
+Isaac Dunham
+Jaydeep Patil
+Jens Gustedt
+Jeremy Huntwork
+Jo-Philipp Wich
+Joakim Sindholt
+John Spencer
+Julien Ramseier
+Justin Cormack
+Kaarle Ritvanen
+Khem Raj
+Kylie McClain
+Leah Neukirchen
+Luca Barbato
+Luka Perkov
+M Farkas-Dyck (Strake)
+Mahesh Bodapati
+Markus Wichmann
+Masanori Ogino
+Michael Clark
+Michael Forney
+Mikhail Kremnyov
+Natanael Copa
+Nicholas J. Kain
+orc
+Pascal Cuoq
+Patrick Oppenlander
+Petr Hosek
+Petr Skocik
+Pierre Carrier
+Reini Urban
+Rich Felker
+Richard Pennington
+Ryan Fairfax
+Samuel Holland
+Segev Finer
+Shiz
+sin
+Solar Designer
+Stefan Kristiansson
+Stefan O'Rear
+Szabolcs Nagy
+Timo Teräs
+Trutz Behn
+Valentin Ochs
+Will Dietz
+William Haddon
+William Pitcock
+
+Portions of this software are derived from third-party works licensed
+under terms compatible with the above MIT license:
+
+The TRE regular expression implementation (src/regex/reg* and
+src/regex/tre*) is Copyright © 2001-2008 Ville Laurikari and licensed
+under a 2-clause BSD license (license text in the source files). The
+included version has been heavily modified by Rich Felker in 2012, in
+the interests of size, simplicity, and namespace cleanliness.
+
+Much of the math library code (src/math/* and src/complex/*) is
+Copyright © 1993,2004 Sun Microsystems or
+Copyright © 2003-2011 David Schultz or
+Copyright © 2003-2009 Steven G. Kargl or
+Copyright © 2003-2009 Bruce D. Evans or
+Copyright © 2008 Stephen L. Moshier or
+Copyright © 2017-2018 Arm Limited
+and labelled as such in comments in the individual source files. All
+have been licensed under extremely permissive terms.
+
+The ARM memcpy code (src/string/arm/memcpy.S) is Copyright © 2008
+The Android Open Source Project and is licensed under a two-clause BSD
+license. It was taken from Bionic libc, used on Android.
+
+The AArch64 memcpy and memset code (src/string/aarch64/*) are
+Copyright © 1999-2019, Arm Limited.
+
+The implementation of DES for crypt (src/crypt/crypt_des.c) is
+Copyright © 1994 David Burren. It is licensed under a BSD license.
+
+The implementation of blowfish crypt (src/crypt/crypt_blowfish.c) was
+originally written by Solar Designer and placed into the public
+domain. The code also comes with a fallback permissive license for use
+in jurisdictions that may not recognize the public domain.
+
+The smoothsort implementation (src/stdlib/qsort.c) is Copyright © 2011
+Valentin Ochs and is licensed under an MIT-style license.
+
+The x86_64 port was written by Nicholas J. Kain and is licensed under
+the standard MIT terms.
+
+The mips and microblaze ports were originally written by Richard
+Pennington for use in the ellcc project. The original code was adapted
+by Rich Felker for build system and code conventions during upstream
+integration. It is licensed under the standard MIT terms.
+
+The mips64 port was contributed by Imagination Technologies and is
+licensed under the standard MIT terms.
+
+The powerpc port was also originally written by Richard Pennington,
+and later supplemented and integrated by John Spencer. It is licensed
+under the standard MIT terms.
+
+All other files which have no copyright comments are original works
+produced specifically for use as part of this library, written either
+by Rich Felker, the main author of the library, or by one or more
+contibutors listed above. Details on authorship of individual files
+can be found in the git version control history of the project. The
+omission of copyright and license comments in each file is in the
+interest of source tree size.
+
+In addition, permission is hereby granted for all public header files
+(include/* and arch/*/bits/*) and crt files intended to be linked into
+applications (crt/*, ldso/dlstart.c, and arch/*/crt_arch.h) to omit
+the copyright notice and permission notice otherwise required by the
+license, and to use these files without any requirement of
+attribution. These files include substantial contributions from:
+
+Bobby Bingham
+John Spencer
+Nicholas J. Kain
+Rich Felker
+Richard Pennington
+Stefan Kristiansson
+Szabolcs Nagy
+
+all of whom have explicitly granted such permission.
+
+This file previously contained text expressing a belief that most of
+the files covered by the above exception were sufficiently trivial not
+to be subject to copyright, resulting in confusion over whether it
+negated the permissions granted in the license. In the spirit of
+permissive licensing, and of not having licensing issues being an
+obstacle to adoption, that text has been removed.
+
+==============================================================================
+libpng: libs/png/LICENSE (used by user32.dll, windowscodecs.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/png/LICENSE
+==============================================================================
+
+COPYRIGHT NOTICE, DISCLAIMER, and LICENSE
+=========================================
+
+PNG Reference Library License version 2
+---------------------------------------
+
+ * Copyright (c) 1995-2026 The PNG Reference Library Authors.
+ * Copyright (c) 2018-2026 Cosmin Truta.
+ * Copyright (c) 2000-2002, 2004, 2006-2018 Glenn Randers-Pehrson.
+ * Copyright (c) 1996-1997 Andreas Dilger.
+ * Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+
+The software is supplied "as is", without warranty of any kind,
+express or implied, including, without limitation, the warranties
+of merchantability, fitness for a particular purpose, title, and
+non-infringement.  In no event shall the Copyright owners, or
+anyone distributing the software, be liable for any damages or
+other liability, whether in contract, tort or otherwise, arising
+from, out of, or in connection with the software, or the use or
+other dealings in the software, even if advised of the possibility
+of such damage.
+
+Permission is hereby granted to use, copy, modify, and distribute
+this software, or portions hereof, for any purpose, without fee,
+subject to the following restrictions:
+
+ 1. The origin of this software must not be misrepresented; you
+    must not claim that you wrote the original software.  If you
+    use this software in a product, an acknowledgment in the product
+    documentation would be appreciated, but is not required.
+
+ 2. Altered source versions must be plainly marked as such, and must
+    not be misrepresented as being the original software.
+
+ 3. This Copyright notice may not be removed or altered from any
+    source or altered source distribution.
+
+
+PNG Reference Library License version 1 (for libpng 0.5 through 1.6.35)
+-----------------------------------------------------------------------
+
+libpng versions 1.0.7, July 1, 2000, through 1.6.35, July 15, 2018 are
+Copyright (c) 2000-2002, 2004, 2006-2018 Glenn Randers-Pehrson, are
+derived from libpng-1.0.6, and are distributed according to the same
+disclaimer and license as libpng-1.0.6 with the following individuals
+added to the list of Contributing Authors:
+
+    Simon-Pierre Cadieux
+    Eric S. Raymond
+    Mans Rullgard
+    Cosmin Truta
+    Gilles Vollant
+    James Yu
+    Mandar Sahastrabuddhe
+    Google Inc.
+    Vadim Barkov
+
+and with the following additions to the disclaimer:
+
+    There is no warranty against interference with your enjoyment of
+    the library or against infringement.  There is no warranty that our
+    efforts or the library will fulfill any of your particular purposes
+    or needs.  This library is provided with all faults, and the entire
+    risk of satisfactory quality, performance, accuracy, and effort is
+    with the user.
+
+Some files in the "contrib" directory and some configure-generated
+files that are distributed with libpng have other copyright owners, and
+are released under other open source licenses.
+
+libpng versions 0.97, January 1998, through 1.0.6, March 20, 2000, are
+Copyright (c) 1998-2000 Glenn Randers-Pehrson, are derived from
+libpng-0.96, and are distributed according to the same disclaimer and
+license as libpng-0.96, with the following individuals added to the
+list of Contributing Authors:
+
+    Tom Lane
+    Glenn Randers-Pehrson
+    Willem van Schaik
+
+libpng versions 0.89, June 1996, through 0.96, May 1997, are
+Copyright (c) 1996-1997 Andreas Dilger, are derived from libpng-0.88,
+and are distributed according to the same disclaimer and license as
+libpng-0.88, with the following individuals added to the list of
+Contributing Authors:
+
+    John Bowler
+    Kevin Bracey
+    Sam Bushell
+    Magnus Holmgren
+    Greg Roelofs
+    Tom Tanner
+
+Some files in the "scripts" directory have other copyright owners,
+but are released under this license.
+
+libpng versions 0.5, May 1995, through 0.88, January 1996, are
+Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+
+For the purposes of this copyright and license, "Contributing Authors"
+is defined as the following set of individuals:
+
+    Andreas Dilger
+    Dave Martindale
+    Guy Eric Schalnat
+    Paul Schmidt
+    Tim Wegner
+
+The PNG Reference Library is supplied "AS IS".  The Contributing
+Authors and Group 42, Inc. disclaim all warranties, expressed or
+implied, including, without limitation, the warranties of
+merchantability and of fitness for any purpose.  The Contributing
+Authors and Group 42, Inc. assume no liability for direct, indirect,
+incidental, special, exemplary, or consequential damages, which may
+result from the use of the PNG Reference Library, even if advised of
+the possibility of such damage.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+source code, or portions hereof, for any purpose, without fee, subject
+to the following restrictions:
+
+ 1. The origin of this source code must not be misrepresented.
+
+ 2. Altered versions must be plainly marked as such and must not
+    be misrepresented as being the original source.
+
+ 3. This Copyright notice may not be removed or altered from any
+    source or altered source distribution.
+
+The Contributing Authors and Group 42, Inc. specifically permit,
+without fee, and encourage the use of this source code as a component
+to supporting the PNG file format in commercial products.  If you use
+this source code in a product, acknowledgment is not required but would
+be appreciated.
+
+==============================================================================
+libpng: libs/png/AUTHORS (used by user32.dll, windowscodecs.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/png/AUTHORS
+==============================================================================
+
+PNG REFERENCE LIBRARY AUTHORS
+=============================
+
+This is the list of PNG Reference Library ("libpng") Contributing
+Authors, for copyright and licensing purposes.
+
+ * Adam Richter
+ * Alexander Smorkalov
+ * Andreas Dilger
+ * Chris Blume
+ * Cosmin Truta
+ * Dave Martindale
+ * Eric S. Raymond
+ * Gilles Vollant
+ * Glenn Randers-Pehrson
+ * Greg Roelofs
+ * Guy Eric Schalnat
+ * Halil Oktay
+ * James Yu
+ * John Bowler
+ * Joshua Inscoe
+ * Kevin Bracey
+ * Lucas Chollet
+ * Magnus Holmgren
+ * Mandar Sahastrabuddhe
+ * Manfred Schlaegl
+ * Mans Rullgard
+ * Matt Sarett
+ * Mike Klein
+ * Mohammad Seet
+ * Pascal Massimino
+ * Paul Schmidt
+ * Petr Simecek
+ * Philippe Antoine
+ * Qiang Zhou
+ * Sam Bushell
+ * Samuel Williams
+ * Simon-Pierre Cadieux
+ * Taegu Ha (하태구)
+ * Tim Wegner
+ * Tobias Stoeckmann
+ * Tom Lane
+ * Tom Tanner
+ * Vadim Barkov
+ * Willem van Schaik
+ * Yuelin Wang (王跃林)
+ * Zhijie Liang
+ * Apple Inc.
+    - Zixu Wang (王子旭)
+ * Arm Holdings
+    - Richard Townsend
+ * Google LLC
+    - Dan Field
+    - Dragoș Tiselice
+    - Leon Scroggins III
+    - Matt Sarett
+    - Mike Klein
+    - Sami Boukortt
+    - Wan-Teh Chang
+ * Loongson Technology Corporation Ltd.
+    - GuXiWei (顾希伟)
+    - JinBo (金波)
+    - ZhangLixia (张利霞)
+ * Samsung Group
+    - Filip Wasil
+ * SpacemiT Hangzhou Technology, Co.
+    - Liang Junzhao (梁俊钊)
+
+The build projects, the build scripts, the test scripts, and other
+files in the "projects", "scripts" and "tests" directories, have
+other copyright owners, but are released under the libpng license.
+
+Some files in the "ci" and "contrib" directories, as well as some
+of the tools-generated files that are distributed with libpng, have
+other copyright owners, and are released under other open source
+licenses.
+
+==============================================================================
+SymCrypt: libs/symcrypt/LICENSE.txt (used by bcrypt.dll, dssenh.dll, rsaenh.dll, ntdll.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/symcrypt/LICENSE.txt
+==============================================================================
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+==============================================================================
+LibTIFF: libs/tiff/COPYRIGHT (used by windowscodecs.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/tiff/COPYRIGHT
+==============================================================================
+
+Copyright (c) 1988-1997 Sam Leffler
+Copyright (c) 1991-1997 Silicon Graphics, Inc.
+
+Permission to use, copy, modify, distribute, and sell this software and 
+its documentation for any purpose is hereby granted without fee, provided
+that (i) the above copyright notices and this permission notice appear in
+all copies of the software and related documentation, and (ii) the names of
+Sam Leffler and Silicon Graphics may not be used in any advertising or
+publicity relating to the software without the specific, prior written
+permission of Sam Leffler and Silicon Graphics.
+
+THE SOFTWARE IS PROVIDED "AS-IS" AND WITHOUT WARRANTY OF ANY KIND, 
+EXPRESS, IMPLIED OR OTHERWISE, INCLUDING WITHOUT LIMITATION, ANY 
+WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.  
+
+IN NO EVENT SHALL SAM LEFFLER OR SILICON GRAPHICS BE LIABLE FOR
+ANY SPECIAL, INCIDENTAL, INDIRECT OR CONSEQUENTIAL DAMAGES OF ANY KIND,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER OR NOT ADVISED OF THE POSSIBILITY OF DAMAGE, AND ON ANY THEORY OF 
+LIABILITY, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE 
+OF THIS SOFTWARE.
+
+==============================================================================
+vkd3d: libs/vkd3d/COPYING (used by wined3d.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/vkd3d/COPYING
+==============================================================================
+
+Copyright 2016-2026 the vkd3d project authors (see the file AUTHORS for a
+complete list)
+
+Vkd3d is free software; you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the
+Free Software Foundation; either version 2.1 of the License, or (at
+your option) any later version.
+
+This library is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public
+License along with this library; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA, 02110-1301 USA.
+
+==============================================================================
+vkd3d: libs/vkd3d/AUTHORS (used by wined3d.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/vkd3d/AUTHORS
+==============================================================================
+
+Akihiro Sagawa
+Alexandre Julliard
+Alistair Leslie-Hughes
+Andrew Eikum
+Andrey Gusev
+Anna (navi) Figueiredo Gomes
+Arkadiusz Hiler
+Atharva Nimbalkar
+Biswapriyo Nath
+Brendan Shanks
+Chip Davis
+Conor McCarthy
+David Gow
+Derek Lesho
+Elizabeth Figura
+Ethan Lee
+Evan Tang
+Fabian Maurer
+Feifan He
+Florian Weimer
+Francisco Casas
+Francois Gouget
+Giovanni Mascellani
+Hans-Kristian Arntzen
+Henri Verbeet
+Isabella Bosia
+Ivan Lyugaev
+Jacek Caban
+Jactry Zeng
+Jan Sikorski
+Joshua Ashton
+Józef Kucia
+Martin Storsjö
+Matteo Bruni
+Nikolay Sivov
+Petrichor Park
+Philip Rebohle
+Rémi Bernon
+Robin Kertels
+Santino Mazza
+Shaun Ren
+Simon McVittie
+Stefan Dösinger
+Sven Hesse
+Victor Chiletto
+Vinson Lee
+Yuxuan Shui
+Zhiyi Zhang
+
+==============================================================================
+libxml2: libs/xml2/COPYING (used by msxml3.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/xml2/COPYING
+==============================================================================
+
+Except where otherwise noted in the source code (e.g. the files hash.c,
+list.c and the trio files, which are covered by a similar licence but
+with different Copyright notices) all the files are:
+
+ Copyright (C) 1998-2012 Daniel Veillard.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is fur-
+nished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FIT-
+NESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+libxml2: libs/xml2/AUTHORS (used by msxml3.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/xml2/AUTHORS
+==============================================================================
+
+Daniel Veillard <daniel@veillard.com>
+Bjorn Reese <breese@users.sourceforge.net>
+William Brack <wbrack@mmm.com.hk>
+Igor Zlatkovic <igor@zlatkovic.com> for the Windows port
+Aleksey Sanin <aleksey@aleksey.com>
+
+==============================================================================
+libxslt: libs/xslt/COPYING (used by msxml3.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/xslt/COPYING
+==============================================================================
+
+Licence for libxslt except libexslt
+----------------------------------------------------------------------
+ Copyright (C) 2001-2002 Daniel Veillard.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is fur-
+nished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FIT-
+NESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+DANIEL VEILLARD BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CON-
+NECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of Daniel Veillard shall not
+be used in advertising or otherwise to promote the sale, use or other deal-
+ings in this Software without prior written authorization from him.
+
+----------------------------------------------------------------------
+
+Licence for libexslt
+----------------------------------------------------------------------
+ Copyright (C) 2001-2002 Thomas Broyer, Charlie Bozeman and Daniel Veillard.
+ All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is fur-
+nished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FIT-
+NESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CON-
+NECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of the authors shall not
+be used in advertising or otherwise to promote the sale, use or other deal-
+ings in this Software without prior written authorization from him.
+----------------------------------------------------------------------
+
+==============================================================================
+libxslt: libs/xslt/AUTHORS (used by msxml3.dll)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/xslt/AUTHORS
+==============================================================================
+
+Daniel Veillard:
+   daniel@veillard.com
+   DV on #gnome IRC channel
+   http://veillard.com/
+   Used to work at W3C, now Red Hat
+   co-chair of W3C XML Linking WG
+   invited expert on the W3C XML Core WG
+   Author of libxml2 upon which this library is based.
+
+Bjorn Reese:
+   breese@users.sourceforge.net
+   http://home1.stofanet.dk/breese/
+   Software developer at http://www.systematic.dk/
+   Member of the XML-MTF Mapping WG.
+
+William Brack <wbrack@mmm.com.hk>
+
+Thomas Broyer <tbroyer@ltgt.net>
+
+Igor Zlatkovic <igor@zlatkovic.com> for the Windows port
+
+Patches gently provided by a multitude of people :
+
+Abhishek Arya <inferno@chromium.org>
+Ben Walton <bwalton@artsci.utoronto.ca>
+Bjorn Reese <breese@src.gnome.org>
+C. M. Sperberg-McQueen <cmsmcq@blackmesatech.com>
+Colin Walters <walters@verbum.org>
+Daniel Mustieles <daniel.mustieles@gmail.com>
+Daniel Richard G <oss@teragram.com>
+Darin Adler <darin@src.gnome.org>
+ÉRDI Gergo <cactus@src.gnome.org>
+Fatih Demir <kabalak@src.gnome.org>
+Federico Mena Quintero <federico@ximian.com>
+Frederic Crozat <fcrozat@mandriva.com>
+Hao Hu <ihaohu@gmail.com>
+Havoc Pennington <hp@pobox.com>
+IlyaS <astro.courier@gmail.com>
+jacob berkman <jacob@ximian.com>
+Jason Viers <bean@beanalby.net>
+Jérôme Carretero <cJ-xslt@zougloub.eu>
+Joachim Breitner <nomeata@debian.org>
+Johan Dahlin <zilch@src.gnome.org>
+John Fleck <jfleck@inkstain.net>
+Jose Maria Celorio <chema@src.gnome.org>
+Julio M. Merino Vidal <jmmv@NetBSD.org>
+Kasimier T. Buchcik <kbuchcik@src.gnome.org>
+Kjartan Maraas <kmaraas@src.gnome.org>
+Laurence Rowe <l@lrowe.co.uk>
+Malcolm Purvis <malcolm@purvis.id.au>
+Martin <gzlist@googlemail.com>
+Michael Bonfils <murlock42@gmail.com>
+Mike Hommey <mh@glandium.org>
+money_seshu Dronamraju <mcseshu@gmail.com>
+Nick Wellnhofer <wellnhofer@aevum.de>
+Nix <nix@esperi.org.uk>
+Pedro F. Giffuni <giffunip@tutopia.com>
+Peter Williams <peterw@ximian.com>
+Rob Richards <rrichard@src.gnome.org>
+Roumen Petrov <bugtrack@roumenpetrov.info>
+Stefan Kost <ensonic@users.sf.net>
+Tomasz Kłoczko <kloczek@src.gnome.org>
+Chris Evans <cevans@chromium.org>
+Iván Chavero <ichavero@chavero.com.mx>
+
+==============================================================================
+zlib 1.3.2: libs/zlib/LICENSE (used by cabinet.dll, dbghelp.dll, ntdll.dll, opcservices.dll, winhttp.dll, wininet.dll, and libpng/libtiff)
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/zlib/LICENSE
+==============================================================================
+
+Copyright notice:
+
+ (C) 1995-2026 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+
+==============================================================================
+SQLite 3.53.2: libs/sqlite3/sqlite3.c (used by winsqlite3.dll), public domain
+From: https://gitlab.winehq.org/wine/wine/-/blob/wine-11.17/libs/sqlite3/sqlite3.c
+==============================================================================
+
+** 2001 September 15
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+

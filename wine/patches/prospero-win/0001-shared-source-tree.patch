@@ -1,0 +1,2242 @@
+JkFlow 1.00 Wine PS4 runtime: prospero-win 108194e -> the shared source tree used by the Wine module builds
+
+The Wine module builds (PW_ROOT of the order-284 runtime and of every later stage) read
+this tree: the Wine patch series in wine/patches, the PS4 shims in wine/ps5, the x86
+translator in src/ and the build tools in tools/. Includes new files. Not included: native/
+and its test (the title's own sources, published under title/) and wine/patches-retired/
+(superseded patch versions that no build applies).
+
+ docs/vulkan-generated-codecs.md
+ wine/patches/0112-server-skip-the-prefix-ownership-check.patch
+ wine/patches/0734-server-reopen-instead-of-dup.patch
+ wine/patches/0735-server-share-the-fd-for-a-mapping.patch
+ wine/patches/0739-ntdll-pass-environment-to-inprocess-server.patch
+ wine/patches/0740-server-pass-prefix-explicitly.patch
+ wine/patches/0740-win32u-ps5-vulkan-hardware-cursor.patch
+ wine/patches/0743-ntdll-survive-a-null-environ.patch
+ wine/patches/0744-ntdll-usd-maps-a-host-page.patch
+ wine/patches/0745-ntdll-client-does-not-own-server-fds.patch
+ wine/patches/0746-ntdll-prefix-arrives-booted.patch
+ wine/patches/0747-ntdll-no-auxiliary-vector.patch
+ wine/patches/0748-win32u-ps5-vulkan-hardware-cursor.patch
+ wine/patches/0770-server-ps5-run-sync-requests-on-client-threads.patch
+ wine/patches/0771-server-drain-the-wake-pipe-with-poll.patch
+ wine/patches/0790-server-ps5-immediate-mutex-calls.patch
+ wine/patches/0810-server-ps5-shared-mutex-word.patch
+ wine/patches/0820-ntdll-ps5-shared-mutex-client.patch
+ wine/patches/0880-wine-ps5-runtime-defaults.patch
+ wine/patches/0882-server-ps5-round-robin-scheduling-and-priorities.patch
+ wine/patches/0886-server-ps5-shared-sync-lifetime.patch
+ wine/patches/0887-ntdll-ps5-shared-sync-client.patch
+ wine/patches/1033-server-log-fatal-protocol-error-to-klog.patch
+ wine/patches/1034-server-nonblocking-through-ioctl.patch
+ wine/patches/1049-kernelbase-log-x86-fault-context-without-debugger.patch
+ wine/patches/1069-ntdll-log-native-libkernel-resolver-failure.patch
+ wine/patches/1070-ntdll-report-native-signal-delivery-state.patch
+ wine/ps5/pw_ws2_32_libc.c
+ wine/ps5/vulkan-wire.md
+ wine/ps5/vulkan/pw_vk_batch.h
+ wine/ps5/vulkan/pw_vk_batch_pe.c
+ wine/ps5/vulkan/pw_vk_pod246.h
+---
+diff --git a/docs/vulkan-generated-codecs.md b/docs/vulkan-generated-codecs.md
+--- a/docs/vulkan-generated-codecs.md
++++ b/docs/vulkan-generated-codecs.md
+@@ -59,11 +59,12 @@
+ the original Unix function index followed by owned fieldwise input bytes; replay
+ decodes into aligned native parameter storage and calls the native thunk, never
+ the guest-pointer thunk. Entire batches pass semantic preflight before effects.
+-The Unix entry accepts legacy v1 batches, while a new PE requires the exact v2
+-capability; mismatched old Unix libraries disable batching safely. Existing
+-seven fast codecs stay first. Additional generated operations are enabled only
+-with the default all-category mask (127); narrower diagnostic masks retain their
+-previous scope. Unknown shapes drain and dispatch synchronously. All six descriptor-template forms use device-scoped registered metadata, with
++The PE probes exact async, v2, then legacy v1 capabilities. A legacy v1 backend
++keeps the seven fast codecs, excludes generated records, and drains ordered
++prefixes within its 4 MiB bound. An unrecognized backend disables batching.
++Additional generated operations require an unset mask and a v2 or async backend.
++Any valid explicit mask, including 127 or 0x7f, selects only the seven v1 categories
++for comparison. Unknown shapes drain and dispatch synchronously. All six descriptor-template forms use device-scoped registered metadata, with
+ command-buffer client tails retaining the originating device association.
+ 
+ The process scratch limit is 16 MiB to preserve the existing 63-producer bound
+diff --git a/wine/patches/0112-server-skip-the-prefix-ownership-check.patch b/wine/patches/0112-server-skip-the-prefix-ownership-check.patch
+--- a/wine/patches/0112-server-skip-the-prefix-ownership-check.patch
++++ b/wine/patches/0112-server-skip-the-prefix-ownership-check.patch
+@@ -14,7 +14,7 @@
+ diff --git a/server/request.c b/server/request.c
+ --- a/server/request.c
+ +++ b/server/request.c
+-@@ -1154,8 +1154,10 @@ static char *create_server_dir( int force )
++@@ -1154,7 +1154,9 @@ static char *create_server_dir( int force )
+          fatal_error( "open %s: %s\n", config_dir, strerror( errno ));
+      if (fstat( config_dir_fd, &st ) == -1)
+          fatal_error( "stat %s: %s\n", config_dir, strerror( errno ));
+diff --git a/wine/patches/0734-server-reopen-instead-of-dup.patch b/wine/patches/0734-server-reopen-instead-of-dup.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0734-server-reopen-instead-of-dup.patch
+@@ -0,0 +1,57 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Tue, 7 Oct 2026 20:30:00 +0000
++Subject: [PATCH] server: reopen a file by name where dup is refused.
++
++This console will not duplicate a descriptor by any means: dup, dup2,
++fcntl(F_DUPFD) and sceKernelRdup all fail, for regular files, directories, shm
++objects, sockets and pipes alike (src/dup-probe).
++
++A file-backed fd does not need duplicating: reopening orig->unix_name gives
++what dup would have, an independent descriptor with its own offset and close.
++Report the failure with the name it had, so a run says whether there was a path
++to reopen at all.
++---
++diff --git a/server/fd.c b/server/fd.c
++index bce9a84f5e..3fefdf4f03 100644
++--- a/server/fd.c
+++++ b/server/fd.c
++@@ -1879,8 +1879,37 @@ struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sha
++     {
++         struct closed_fd *closed = mem_alloc( sizeof(*closed) );
++         if (!closed) goto failed;
++-        if ((fd->unix_fd = dup( orig->unix_fd )) == -1)
+++        fd->unix_fd = dup( orig->unix_fd );
+++#ifdef __PROSPERO__
+++        /* ⚠ THIS CONSOLE REFUSES TO DUPLICATE A DESCRIPTOR, BY ANY MEANS.
+++         * Measured with src/dup-probe: dup, dup2, fcntl(F_DUPFD) and
+++         * sceKernelRdup all fail, for regular files, directories, shm objects,
+++         * sockets and pipes alike.
+++         *
+++         * A file-backed fd does not need duplicating: reopening its name gives
+++         * what dup would have -- an independent descriptor with its own offset
+++         * and its own close -- and shares nothing. A socket or pipe has no name
+++         * and still cannot be duplicated. */
+++        if (fd->unix_fd == -1 && orig->unix_name)
+++        {
+++            int flags = (orig->access & FILE_WRITE_DATA) ? O_RDWR : O_RDONLY;
+++
+++            if ((fd->unix_fd = open( orig->unix_name, flags )) == -1 && flags != O_RDONLY)
+++                fd->unix_fd = open( orig->unix_name, O_RDONLY );
+++        }
+++#endif
+++        if (fd->unix_fd == -1)
++         {
+++#ifdef __PROSPERO__
+++            {
+++                extern int sceKernelDebugOutText( int channel, const char *text );
+++                char note[320];
+++                snprintf( note, sizeof(note),
+++                          "wineserver: dup_fd_object failed, errno %d, unix_name %s\n",
+++                          errno, orig->unix_name ? orig->unix_name : "(none -- cannot reopen)" );
+++                sceKernelDebugOutText( 0, note );
+++            }
+++#endif
++             file_set_error();
++             free( closed );
++             goto failed;
+diff --git a/wine/patches/0735-server-share-the-fd-for-a-mapping.patch b/wine/patches/0735-server-share-the-fd-for-a-mapping.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0735-server-share-the-fd-for-a-mapping.patch
+@@ -0,0 +1,72 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Tue, 7 Oct 2026 20:50:00 +0000
++Subject: [PATCH] server: share the descriptor for a mapping when dup is refused.
++
++No descriptor can be duplicated on this console -- dup, dup2, fcntl(F_DUPFD)
++and sceKernelRdup all fail, for regular files, directories, shm objects,
++sockets and pipes alike (src/dup-probe). An fd with a name can be reopened
++instead (0734); one without, which is the branch a mapping takes, cannot.
++
++Sharing is already how this path prefers to work: get_fd_object_for_mapping
++returns grab_object() whenever an fd with matching access and sharing exists,
++and only falls through to dup_fd_object when none matches exactly. A mapping
++never seeks -- it mmaps and nothing else -- so the file offset a duplicate
++would have owned is never used. Take the original when duplication is refused.
++
++Two things come with sharing rather than duplicating, and both took a run on
++the console to find:
++
++Leave the descriptor to its owner, as the sharing path above does. set_fd_user
++asserts that an fd has no user yet, and one opened for another object already
++has one; calling it aborted the server the first time a mapping of a real file
++took this path. The earlier ones had no owner, so it stayed hidden.
++
++Clear the error. dup_fd_object turns its errno into an NTSTATUS before it
++returns -- EPERM becomes STATUS_ACCESS_DENIED -- so recovering the descriptor
++without clearing it fails the request with the error of a call that no longer
++matters. That is what refused to start the game, long after the mapping itself
++had succeeded:
++
++    wine: cannot run "C:\Games\Oblivion\Oblivion.exe" in this process:
++          status c0000022
++---
++diff --git a/server/mapping.c b/server/mapping.c
++index 0b0f35e5e3..674bacb4c0 100644
++--- a/server/mapping.c
+++++ b/server/mapping.c
++@@ -1146,7 +1146,34 @@ static bool mapping_init( struct object *obj, const void *init_data )
++         if (!(mapping->fd = get_fd_object_for_mapping( data->fd, mapping_access, sharing )))
++         {
++             mapping->fd = dup_fd_object( data->fd, mapping_access, sharing, FILE_SYNCHRONOUS_IO_NONALERT );
+++#ifdef __PROSPERO__
+++            /* ⚠ No descriptor can be duplicated on this console (src/dup-probe:
+++             * dup, dup2, fcntl(F_DUPFD) and sceKernelRdup all refused, for every
+++             * kind of descriptor), and the fd that fails here -- the NLS file,
+++             * opened by the server itself -- has no unix_name to reopen.
+++             *
+++             * Sharing is already how this path prefers to work:
+++             * get_fd_object_for_mapping returns grab_object() whenever it finds
+++             * an fd with matching access and sharing, and only falls here when
+++             * none matches exactly. A mapping never seeks -- it mmaps and
+++             * nothing else -- so the file offset a duplicate would have owned is
+++             * never used. Take the original rather than fail. */
+++#endif
++             if (mapping->fd) set_fd_user( mapping->fd, &mapping_fd_ops, NULL );
+++#ifdef __PROSPERO__
+++            /* Take the original, and leave it to its owner exactly as the
+++             * sharing path above does: set_fd_user asserts that an fd has no
+++             * user yet, and this one belongs to the object it was opened for.
+++             *
+++             * dup_fd_object has already turned its errno into an NTSTATUS on
+++             * the way out -- EPERM becomes STATUS_ACCESS_DENIED -- so clear it,
+++             * or the request fails with the error of a call we just recovered
+++             * from. That is what refused to start the game:
+++             *
+++             *     wine: cannot run "C:\Games\Oblivion\Oblivion.exe" in this
+++             *           process: status c0000022 */
+++            else if ((mapping->fd = (struct fd *)grab_object( data->fd ))) clear_error();
+++#endif
++         }
++         if (!mapping->fd) return false;
++ 
+diff --git a/wine/patches/0739-ntdll-pass-environment-to-inprocess-server.patch b/wine/patches/0739-ntdll-pass-environment-to-inprocess-server.patch
+--- a/wine/patches/0739-ntdll-pass-environment-to-inprocess-server.patch
++++ b/wine/patches/0739-ntdll-pass-environment-to-inprocess-server.patch
+@@ -1,33 +1,20 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+-From: ps4-gladius <ps4-gladius@invalid>
+-Subject: [PATCH] ntdll/server: pass the module environment to the in-process server
++Subject: [PATCH] ntdll/server: pass module environment to in-process server
+ 
+-Each PS4 PRX has its own statically linked libc environment. The launcher
+-publishes WINEPREFIX and other variables into ntdll's environ, while the
+-in-process wineserver PRX's private environ remains NULL. create_server_dir
+-then misses WINEPREFIX and rejects the relative HOME fallback before Wine can
+-reach the game. Pass the stable environment vector when connecting and install
+-it in the server module before its startup reads environment variables.
+-
+-Also emit the server's received environment state to klog for this startup
+-boundary.
+----
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+-index 4bbe2aeafe..bc8fc6ad1e 100644
++index ceb82e7..bcd4436 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -86,6 +86,10 @@
++@@ -86,6 +86,9 @@
+  #include "wine/server.h"
+  #include "wine/debug.h"
+  #include "unix_private.h"
+-+
+ +#ifdef __PROSPERO__
+ +extern char **environ;
+ +#endif
+  #include "ddk/wdm.h"
+  
+  WINE_DEFAULT_DEBUG_CHANNEL(server);
+-@@ -1927,7 +1931,7 @@ static int connect_inprocess_server(void)
++@@ -1512,7 +1515,7 @@ static int connect_inprocess_server(void)
+      Dl_info info;
+      char *dir = NULL, *module_path, *nls_dir, *p;
+      void *module;
+@@ -36,20 +23,20 @@
+      int fd;
+  
+      if (dladdr( connect_inprocess_server, &info ) && info.dli_fname) dir = strdup( info.dli_fname );
+-@@ -1959,7 +1963,7 @@ static int connect_inprocess_server(void)
++@@ -1541,7 +1544,7 @@ static int connect_inprocess_server(void)
+      if (!(connect_server = dlsym( module, "pw_wineserver_connect" )))
+          fatal_error( "%s has no pw_wineserver_connect\n", module_path );
+      register_server_thread = dlsym( module, "pw_wine_thread_register" );
+ -    if ((fd = connect_server( nls_dir )) == -1)
+ +    if ((fd = connect_server( nls_dir, environ )) == -1)
+          fatal_error( "the in-process server %s did not start\n", module_path );
+-     unregister_server_thread = dlsym( module, "pw_wine_thread_unregister" );
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
++     TRACE( "connected to the in-process server %s\n", module_path );
++     free( dir );
+ diff --git a/server/main.c b/server/main.c
+-index 6b9dd0b9b0..5d4361a586 100644
++index 3f209a5..3b17e7d 100644
+ --- a/server/main.c
+ +++ b/server/main.c
+-@@ -282,10 +282,27 @@ static void start_inprocess_server(void)
++@@ -278,9 +278,23 @@ static void start_inprocess_server(void)
+  /* Start the server on first use and return a new client connection, which
+   * ntdll uses in place of connecting to the server socket. Initialisation
+   * runs on the caller's thread, so it completes before the first request. */
+@@ -57,37 +44,33 @@
+ +DECLSPEC_EXPORT int pw_wineserver_connect( const char *nls_dir, char **envp )
+  {
+      static pthread_once_t once = PTHREAD_ONCE_INIT;
+- 
+ +#ifdef __PROSPERO__
+-+    /* Each PS4 PRX has its own statically linked libc environment. ntdll
+-+     * populates its environment through pw_ps4_setenv, but this in-process
+-+     * server PRX has a separate environ pointer. Share the stable ntdll list
+-+     * before create_server_dir() reads WINEPREFIX/HOME or server options. */
+++    /* PS4 PRXs have separate static libc environments. */
+ +    extern char **environ;
+ +    extern int sceKernelDebugOutText( int channel, const char *text );
+ +    char line[192];
+ +    unsigned int env_count = 0;
+-+
+ +    environ = envp;
+ +    while (envp && envp[env_count]) env_count++;
+-+    snprintf( line, sizeof(line), "wineserver: environment handoff entries=%u prefix=%s home=%s\n",
+++    snprintf( line, sizeof(line),
+++              "wineserver: environment handoff entries=%u prefix=%s home=%s\n",
+ +              env_count, getenv("WINEPREFIX") ? "set" : "missing",
+ +              getenv("HOME") ? getenv("HOME") : "missing" );
+ +    sceKernelDebugOutText( 0, line );
+ +#endif
++ 
+      if (!inprocess_nls_dir && nls_dir) inprocess_nls_dir = strdup( nls_dir );
+      pthread_once( &once, start_inprocess_server );
+- #ifdef __PROSPERO__
+ diff --git a/server/request.h b/server/request.h
+-index 77ed687fb1..a504617d28 100644
++index 397f662..3df3985 100644
+ --- a/server/request.h
+ +++ b/server/request.h
+-@@ -62,7 +62,7 @@ extern timeout_t monotonic_counter(void);
+- #include <pthread.h>
+- #include "ps5_sync.h"
++@@ -60,7 +60,7 @@ extern timeout_t monotonic_counter(void);
++ #endif
++ #ifdef WINE_INPROCESS_SERVER
+  extern int connect_inprocess_client(void);
+ -extern int pw_wineserver_connect( const char *nls_dir );
+ +extern int pw_wineserver_connect( const char *nls_dir, char **envp );
+  extern const char *inprocess_nls_dir;
+- /* client threads running requests themselves (fd.c, request.c) */
+- extern pthread_mutex_t inprocess_server_mutex;
++ #endif
++ extern void open_master_socket(void);
+diff --git a/wine/patches/0740-server-pass-prefix-explicitly.patch b/wine/patches/0740-server-pass-prefix-explicitly.patch
+--- a/wine/patches/0740-server-pass-prefix-explicitly.patch
++++ b/wine/patches/0740-server-pass-prefix-explicitly.patch
+@@ -1,17 +1,10 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+-From: ps4-gladius <ps4-gladius@invalid>
+-Subject: [PATCH] server: pass the Wine prefix directly to in-process server
++Subject: [PATCH] server: pass Wine prefix explicitly to in-process server
+ 
+-The first environment handoff was observable in pw_wineserver_connect, but
+-create_server_dir still took its HOME fallback and faulted at the non-absolute
+-home check. Pass WINEPREFIX as a separate argument from ntdll and copy it into
+-server-owned storage before startup. Use that copy for the server directory;
+-this avoids relying on cross-PRX libc getenv/environ aliasing.
+----
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
++index bcd4436..c7e0c6a 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -1931,7 +1931,7 @@
++@@ -1515,7 +1515,7 @@ static int connect_inprocess_server(void)
+      Dl_info info;
+      char *dir = NULL, *module_path, *nls_dir, *p;
+      void *module;
+@@ -20,43 +13,65 @@
+      int fd;
+  
+      if (dladdr( connect_inprocess_server, &info ) && info.dli_fname) dir = strdup( info.dli_fname );
+-@@ -1963,7 +1963,7 @@
++@@ -1544,7 +1544,7 @@ static int connect_inprocess_server(void)
+      if (!(connect_server = dlsym( module, "pw_wineserver_connect" )))
+          fatal_error( "%s has no pw_wineserver_connect\n", module_path );
+      register_server_thread = dlsym( module, "pw_wine_thread_register" );
+ -    if ((fd = connect_server( nls_dir, environ )) == -1)
+ +    if ((fd = connect_server( nls_dir, environ, getenv( "WINEPREFIX" ) )) == -1)
+          fatal_error( "the in-process server %s did not start\n", module_path );
+-     unregister_server_thread = dlsym( module, "pw_wine_thread_unregister" );
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
+-diff --git a/server/request.h b/server/request.h
+---- a/server/request.h
+-+++ b/server/request.h
+-@@ -62,7 +62,7 @@
+- #include <pthread.h>
+- #include "ps5_sync.h"
+- extern int connect_inprocess_client(void);
+--extern int pw_wineserver_connect( const char *nls_dir, char **envp );
+-+extern int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix );
+- extern const char *inprocess_nls_dir;
+- /* client threads running requests themselves (fd.c, request.c) */
+- extern pthread_mutex_t inprocess_server_mutex;
++     TRACE( "connected to the in-process server %s\n", module_path );
++     free( dir );
++diff --git a/server/main.c b/server/main.c
++index 3b17e7d..76027a8 100644
++--- a/server/main.c
+++++ b/server/main.c
++@@ -278,20 +278,25 @@ static void start_inprocess_server(void)
++ /* Start the server on first use and return a new client connection, which
++  * ntdll uses in place of connecting to the server socket. Initialisation
++  * runs on the caller's thread, so it completes before the first request. */
++-DECLSPEC_EXPORT int pw_wineserver_connect( const char *nls_dir, char **envp )
+++DECLSPEC_EXPORT int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix )
++ {
++     static pthread_once_t once = PTHREAD_ONCE_INIT;
++ #ifdef __PROSPERO__
++     /* PS4 PRXs have separate static libc environments. */
++     extern char **environ;
+++    extern char pw_wineserver_prefix[4096];
++     extern int sceKernelDebugOutText( int channel, const char *text );
++     char line[192];
++     unsigned int env_count = 0;
++     environ = envp;
+++    if (prefix && strlen(prefix) < sizeof(pw_wineserver_prefix))
+++        strcpy(pw_wineserver_prefix, prefix);
+++    else pw_wineserver_prefix[0] = 0;
++     while (envp && envp[env_count]) env_count++;
++     snprintf( line, sizeof(line),
++-              "wineserver: environment handoff entries=%u prefix=%s home=%s\n",
++-              env_count, getenv("WINEPREFIX") ? "set" : "missing",
+++              "wineserver: environment handoff entries=%u prefix-arg=%s env-prefix=%s home=%s\n",
+++              env_count, pw_wineserver_prefix[0] ? pw_wineserver_prefix : "missing",
+++              getenv("WINEPREFIX") ? "set" : "missing",
++               getenv("HOME") ? getenv("HOME") : "missing" );
++     sceKernelDebugOutText( 0, line );
++ #endif
+ diff --git a/server/request.c b/server/request.c
++index 26fd1c8..71d4705 100644
+ --- a/server/request.c
+ +++ b/server/request.c
+-@@ -78,6 +78,11 @@
++@@ -73,6 +73,11 @@
+  static const char * const server_socket_name = "socket";   /* name of the socket file */
+  static const char * const server_lock_name = "lock";       /* name of the server lock file */
+  
+ +#ifdef __PROSPERO__
+-+/* The server PRX's libc getenv() can see a different environment from ntdll. */
+++/* The server PRX libc getenv() can see a different environment. */
+ +char pw_wineserver_prefix[4096];
+ +#endif
+ +
+  struct master_socket
+  {
+      struct object        obj;        /* object header */
+-@@ -1104,10 +1109,16 @@
++@@ -783,10 +788,16 @@ static void create_dir( const char *name, struct stat *st )
+  /* create the server directory and chdir to it */
+  static char *create_server_dir( int force )
+  {
+@@ -74,40 +89,16 @@
+      /* open the configuration directory */
+  
+      if (prefix)
+-diff --git a/server/main.c b/server/main.c
+---- a/server/main.c
+-+++ b/server/main.c
+-@@ -282,7 +282,7 @@
+- /* Start the server on first use and return a new client connection, which
+-  * ntdll uses in place of connecting to the server socket. Initialisation
+-  * runs on the caller's thread, so it completes before the first request. */
+--DECLSPEC_EXPORT int pw_wineserver_connect( const char *nls_dir, char **envp )
+-+DECLSPEC_EXPORT int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix )
+- {
+-     static pthread_once_t once = PTHREAD_ONCE_INIT;
+- 
+-@@ -292,14 +292,20 @@
+-      * server PRX has a separate environ pointer. Share the stable ntdll list
+-      * before create_server_dir() reads WINEPREFIX/HOME or server options. */
+-     extern char **environ;
+-+    extern char pw_wineserver_prefix[4096];
+-     extern int sceKernelDebugOutText( int channel, const char *text );
+-     char line[192];
+-     unsigned int env_count = 0;
+- 
+-     environ = envp;
+-+    if (prefix && strlen(prefix) < sizeof(pw_wineserver_prefix))
+-+        strcpy(pw_wineserver_prefix, prefix);
+-+    else
+-+        pw_wineserver_prefix[0] = 0;
+-     while (envp && envp[env_count]) env_count++;
+--    snprintf( line, sizeof(line), "wineserver: environment handoff entries=%u prefix=%s home=%s\n",
+--              env_count, getenv("WINEPREFIX") ? "set" : "missing",
+-+    snprintf( line, sizeof(line), "wineserver: environment handoff entries=%u prefix-arg=%s env-prefix=%s home=%s\n",
+-+              env_count, pw_wineserver_prefix[0] ? pw_wineserver_prefix : "missing",
+-+              getenv("WINEPREFIX") ? "set" : "missing",
+-               getenv("HOME") ? getenv("HOME") : "missing" );
+-     sceKernelDebugOutText( 0, line );
++diff --git a/server/request.h b/server/request.h
++index 3df3985..9d03814 100644
++--- a/server/request.h
+++++ b/server/request.h
++@@ -60,7 +60,7 @@ extern timeout_t monotonic_counter(void);
++ #endif
++ #ifdef WINE_INPROCESS_SERVER
++ extern int connect_inprocess_client(void);
++-extern int pw_wineserver_connect( const char *nls_dir, char **envp );
+++extern int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix );
++ extern const char *inprocess_nls_dir;
+  #endif
+--- 
+-2.47.3
++ extern void open_master_socket(void);
+diff --git a/wine/patches/0740-win32u-ps5-vulkan-hardware-cursor.patch b/wine/patches/0740-win32u-ps5-vulkan-hardware-cursor.patch
+deleted file mode 100644
+--- a/wine/patches/0740-win32u-ps5-vulkan-hardware-cursor.patch
++++ /dev/null
+@@ -1,76 +0,0 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+-From: prospero-win <prospero-win@invalid>
+-Date: Fri, 2 Oct 2026 09:51:58 +0200
+-Subject: [PATCH] win32u: Show the cursor over PS5 Vulkan frames with
+- VideoOut's hardware cursor.
+-
+-Vulkan frames reach the screen through the GPU driver's own video output
+-(patch 0460), which the PS5 user driver does not compose, so a Direct3D
+-game through DXVK showed no pointer in its menus (Half-Life 2). After
+-each present, win32u hands the cursor the application set (straight-alpha
+-ARGB from the user driver, NULL when hidden) and its place on the desktop
+-to libvulkan.prx's pw_videoout_cursor, which shows it with VideoOut's
+-hardware cursor over the swapchain's frames. OpenGL games, which draw
+-through Mesa's Zink and present with Vulkan, get their pointer the same
+-way. The cursor image is read under the screen lock, as the driver's own
+-composition reads it.
+----
+- dlls/win32u/ps5drv.c | 24 ++++++++++++++++++++++++
+- dlls/win32u/vulkan.c |  7 +++++++
+- 2 files changed, 31 insertions(+)
+-
+-diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+-index 286d42d..ccc69c0 100644
+---- a/dlls/win32u/ps5drv.c
+-+++ b/dlls/win32u/ps5drv.c
+-@@ -716,6 +716,30 @@ static void ps5_SetCursor( HWND hwnd, HCURSOR handle )
+-     TRACE( "cursor %p: %ux%u\n", handle, width, height );
+- }
+- 
+-+#ifdef SONAME_LIBVULKAN
+-+/* Vulkan frames reach the screen through the GPU driver's own video output
+-+ * (patch 0460), which this driver does not compose, so after each present
+-+ * libvulkan.prx shows the cursor with VideoOut's hardware cursor
+-+ * (pw_videoout_cursor): the image, NULL when hidden, at its place on the
+-+ * desktop, which the output shows whole. */
+-+void ps5drv_vulkan_cursor( void *vulkan_handle )
+-+{
+-+    static int (*show)( const UINT32 *, UINT, UINT, INT, INT, UINT, UINT );
+-+    static BOOL looked;
+-+
+-+    if (!looked)
+-+    {
+-+        looked = TRUE;
+-+        show = dlsym( vulkan_handle, "pw_videoout_cursor" );
+-+    }
+-+    if (!show) return;
+-+    pthread_mutex_lock( &screen_lock );
+-+    show( cursor_width && cursor_height ? cursor_image : NULL, cursor_width, cursor_height,
+-+          cursor.x - cursor_hotspot.x, cursor.y - cursor_hotspot.y, screen_width, screen_height );
+-+    pthread_mutex_unlock( &screen_lock );
+-+}
+-+#endif
+-+
+- static BOOL ps5_GetCursorPos( POINT *pos )
+- {
+-     /* the server's position is the pointer's: every move goes through it */
+-diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+-index cb64dc0..7fadce0 100644
+---- a/dlls/win32u/vulkan.c
+-+++ b/dlls/win32u/vulkan.c
+-@@ -2023,6 +2023,13 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+- 
+-     if (swapchains != swapchains_buffer) free( swapchains );
+- 
+-+#ifdef WINE_PS5_USER_DRIVER
+-+    {
+-+        extern void ps5drv_vulkan_cursor( void *vulkan_handle );
+-+        ps5drv_vulkan_cursor( vulkan_handle );
+-+    }
+-+#endif
+-+
+-     if (TRACE_ON( fps ))
+-     {
+-         static unsigned long frames, frames_total;
+--- 
+-2.43.0
+diff --git a/wine/patches/0743-ntdll-survive-a-null-environ.patch b/wine/patches/0743-ntdll-survive-a-null-environ.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0743-ntdll-survive-a-null-environ.patch
+@@ -0,0 +1,63 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 10:10:00 +0000
++Subject: [PATCH] ntdll: survive a NULL environ.
++
++The client and the in-process server now complete their handshake --
++
++    WINE wine startup: server connected
++
++-- and start_main_thread carries on to get_initial_environment, which faults at
++address 0:
++
++    PW_WINE64 fault signal=0xb addr=0x0 rip=0x800884612   (env.c:877)
++
++    for (e = environ; *e; e++) *size += strlen(*e) + 6;
++
++environ is NULL. A title inherits no environment, and this module's libc leaves
++the list NULL until something writes to it -- pw_ps4_setenv, which the title
++calls through the module's descriptor, because each module otherwise carries a
++private one. Wine takes POSIX at its word and dereferences it unguarded.
++
++Carry on with an empty environment instead of dying, and say so once through
++klog. This is not the whole story: an empty environment means no WINEPREFIX and
++no HOME, so Wine will go looking for its prefix somewhere else. The title's own
++"environment status=0" covers only its setenv and never the module's, so
++pw_prx_env_ps4.c now reports what reached this environ -- "never called" and
++"called and did not take" have looked identical until now.
++---
++diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
++index 1d289007c7..1ac16ed28b 100644
++--- a/dlls/ntdll/unix/env.c
+++++ b/dlls/ntdll/unix/env.c
++@@ -872,14 +872,28 @@ static WCHAR *get_initial_environment( SIZE_T *pos, SIZE_T *size )
++     char **e;
++     WCHAR *env, *ptr, *end;
++ 
+++#ifdef __PROSPERO__
+++    /* ⚠ A title has no environment to inherit, and this module's libc leaves
+++     * environ NULL until something writes to it (pw_ps4_setenv, which the title
+++     * calls through the module's descriptor). Wine assumes POSIX gives it a
+++     * list and walked straight into the NULL here, faulting at address 0 with
+++     * the whole client/server handshake already behind it. Say so and carry on
+++     * with an empty environment rather than die. */
+++    if (!environ)
+++    {
+++        extern int sceKernelDebugOutText( int channel, const char *text );
+++        sceKernelDebugOutText( 0, "wine: environ is NULL; starting with an empty environment\n" );
+++    }
+++#endif
+++
++     /* estimate needed size */
++     *size = 1;
++-    for (e = environ; *e; e++) *size += strlen(*e) + 6;
+++    for (e = environ; e && *e; e++) *size += strlen(*e) + 6;
++ 
++     env = malloc( *size * sizeof(WCHAR) );
++     ptr = env;
++     end = env + *size - 1;
++-    for (e = environ; *e && ptr < end; e++)
+++    for (e = environ; e && *e && ptr < end; e++)
++     {
++         char *str = *e;
++ 
+diff --git a/wine/patches/0744-ntdll-usd-maps-a-host-page.patch b/wine/patches/0744-ntdll-usd-maps-a-host-page.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0744-ntdll-usd-maps-a-host-page.patch
+@@ -0,0 +1,65 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 10:40:00 +0000
++Subject: [PATCH] ntdll: map the user shared data a whole host page at a time.
++
++With the environment reaching Wine, it finds its prefix, decides the prefix
++needs wineboot, and stops there:
++
++    err:virtual:virtual_init_user_shared_data failed to remap the process USD: 0
++
++res is 0, so server_get_unix_fd worked and it is the mmap that failed -- which
++the message could not say, because it only ever prints res.
++
++The length is the likely reason: it asks for sizeof(KUSER_SHARED_DATA), and this
++console's pages are 16 KiB, so that is not a whole page. The section is exactly
++one host page wide (patch 0102), so map it that way. virtual_map_user_shared_data
++already passes a page-sized length and is reached first, without complaint.
++
++Both messages now print errno as well, so if the length was not the reason the
++next run says what was.
++---
++diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
++index aba21c6f4b..2cf071d0e2 100644
++--- a/dlls/ntdll/unix/virtual.c
+++++ b/dlls/ntdll/unix/virtual.c
++@@ -4799,7 +4799,11 @@ void virtual_map_user_shared_data(void)
++     if ((res = server_get_unix_fd( section, 0, &fd, &needs_close, NULL, NULL )) ||
++         (user_shared_data != mmap( user_shared_data, page_size, PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0 )))
++     {
+++#ifdef __PROSPERO__
+++        ERR( "failed to remap the process USD: %d errno %d\n", res, errno );
+++#else
++         ERR( "failed to remap the process USD: %d\n", res );
+++#endif
++         exit(1);
++     }
++     if (needs_close) close( fd );
++@@ -4827,12 +4831,27 @@ void virtual_init_user_shared_data(void)
++         ERR( "failed to open the USD section: %08x\n", status );
++         exit(1);
++     }
+++#ifdef __PROSPERO__
+++    /* ⚠ Map a whole host page. This console's pages are 16 KiB, and the
+++     * section is exactly one of them (patch 0102); mmap refuses a length that
+++     * is not a multiple of a page. The error below prints errno too, because
+++     * res is 0 whenever it is the mmap rather than the fd that failed. */
+++    if ((res = server_get_unix_fd( section, 0, &fd, &needs_close, NULL, NULL )) ||
+++        (data = mmap( NULL, (sizeof(*data) + host_page_size - 1) & ~(host_page_size - 1),
+++                      PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0 )) == MAP_FAILED)
+++    {
+++        ERR( "failed to remap the process USD: %d errno %d size %u host_page %u\n",
+++             res, errno, (unsigned int)sizeof(*data), (unsigned int)host_page_size );
+++        exit(1);
+++    }
+++#else
++     if ((res = server_get_unix_fd( section, 0, &fd, &needs_close, NULL, NULL )) ||
++         (data = mmap( NULL, sizeof(*data), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0 )) == MAP_FAILED)
++     {
++         ERR( "failed to remap the process USD: %d\n", res );
++         exit(1);
++     }
+++#endif
++     if (needs_close) close( fd );
++     NtClose( section );
++ 
+diff --git a/wine/patches/0745-ntdll-client-does-not-own-server-fds.patch b/wine/patches/0745-ntdll-client-does-not-own-server-fds.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0745-ntdll-client-does-not-own-server-fds.patch
+@@ -0,0 +1,75 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 10:55:00 +0000
++Subject: [PATCH] ntdll: the client does not own the descriptors the server sends.
++
++0744 added errno to the failure and it answered a different question than the
++one asked:
++
++    failed to remap the process USD: 0 errno 9 size 1848 host_page 16384
++
++errno 9 is EBADF. The length was never the problem -- the descriptor was.
++
++server_get_unix_fd hands the caller a descriptor and a needs_close telling it to
++close it afterwards, which is right when the server sent a duplicate. Nothing
++can be duplicated on this console, so send_client_fd hands over the descriptor
++itself (0737, 0738), and closing it closes the server's. The user shared data
++shows it plainly: virtual_map_user_shared_data maps the section, closes the
++descriptor on its way out, and the next caller asks the server for the same
++object and gets a number that is no longer open.
++
++The server owns these and closes them with the object, so the client closes
++none of them: not on needs_close, and not when a cache entry is evicted.
++
++The 16 KiB rounding 0744 added stays -- the section is a host page wide (0102)
++and mapping it whole is correct either way.
++---
++diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
++index ceb82e7182..5747dd9089 100644
++--- a/dlls/ntdll/unix/server.c
+++++ b/dlls/ntdll/unix/server.c
++@@ -1285,6 +1285,16 @@ int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
++                     *needs_close = (!reply->cacheable ||
++                                     !add_fd_to_cache( handle, fd, reply->type,
++                                                       reply->access, reply->options ));
+++#ifdef __PROSPERO__
+++                    /* ⚠ This descriptor is the server's own, not a copy of it:
+++                     * nothing can be duplicated on this console, so the server
+++                     * hands the descriptor itself over (see wine_server_send_fd
+++                     * and send_client_fd). Closing it here closes the server's,
+++                     * and the next request for the same object answers with a
+++                     * number that is no longer open. The server owns these and
+++                     * closes them with the object. */
+++                    *needs_close = 0;
+++#endif
++                 }
++                 else ret = STATUS_TOO_MANY_OPENED_FILES;
++             }
++@@ -2105,7 +2115,13 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
++ 
++     server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
++ 
+++#ifndef __PROSPERO__
+++    /* the cache held a copy of the server's descriptor; here it holds the
+++     * server's own -- see server_get_unix_fd */
++     if (fd != -1) close( fd );
+++#else
+++    (void)fd;
+++#endif
++     return ret;
++ }
++ 
++@@ -2170,7 +2186,13 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
++ 
++     server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
++ 
+++#ifndef __PROSPERO__
+++    /* as above: evicting the cache entry does not close the server's own
+++     * descriptor, which it closes with the object */
++     if (fd != -1) close( fd );
+++#else
+++    (void)fd;
+++#endif
++ 
++     if (ret != STATUS_INVALID_HANDLE || !handle) return ret;
++     if (!peb->BeingDebugged) return ret;
+diff --git a/wine/patches/0746-ntdll-prefix-arrives-booted.patch b/wine/patches/0746-ntdll-prefix-arrives-booted.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0746-ntdll-prefix-arrives-booted.patch
+@@ -0,0 +1,52 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 11:20:00 +0000
++Subject: [PATCH] ntdll: the prefix arrives booted, so do not run wineboot.
++
++With the user shared data mapped (0744, 0745), Wine reaches the end of its
++process initialisation and stops at the one thing a title cannot do:
++
++    trace:process:NtCreateUserProcess process creation is not supported on PS5
++    err:environ:run_wineboot failed to start wineboot c00000bb
++
++c00000bb is STATUS_NOT_SUPPORTED. wineboot is a separate executable, and
++NtCreateUserProcess has never been available here.
++
++It also has nothing to do. The prefix is built by Wine on a host and copied to
++the console whole -- registry, system32 and all -- so it arrives in the state
++wineboot would leave it in. Signal the event the rest of the process waits on
++and return.
++
++Falling through instead would wait the full five minutes for a process that
++cannot start, report a timeout, and carry on anyway.
++
++virtual_init_user_shared_data still runs: it fills in the shared data the
++process needs regardless of who booted the prefix.
++---
++diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
++index 1ac16ed28b..5d2b5252c4 100644
++--- a/dlls/ntdll/unix/env.c
+++++ b/dlls/ntdll/unix/env.c
++@@ -1582,6 +1582,22 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
++     }
++ 
++     virtual_init_user_shared_data();
+++
+++#ifdef __PROSPERO__
+++    /* ⚠ A title cannot create a process -- NtCreateUserProcess answers
+++     * STATUS_NOT_SUPPORTED -- so wineboot cannot run here:
+++     *
+++     *     trace:process:NtCreateUserProcess process creation is not supported
+++     *     err:environ:run_wineboot failed to start wineboot c00000bb
+++     *
+++     * It has nothing to do either. The prefix is built by Wine on a host and
+++     * copied to the console whole, registry and all, so it arrives booted.
+++     * Signal the event the rest of the process waits on and carry on; falling
+++     * through would wait five minutes for a process that cannot start. */
+++    NtSetEvent( handles[0], NULL );
+++    goto wait;
+++#endif
+++
++     env[size] = 0;
++     params.Flags           = PROCESS_PARAMS_FLAG_NORMALIZED;
++     params.Environment     = env;
+diff --git a/wine/patches/0747-ntdll-no-auxiliary-vector.patch b/wine/patches/0747-ntdll-no-auxiliary-vector.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0747-ntdll-no-auxiliary-vector.patch
+@@ -0,0 +1,44 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 11:50:00 +0000
++Subject: [PATCH] ntdll: report no image address; there is no auxiliary vector.
++
++With the mapping fixed, load_main_exe maps Oblivion and start_main_thread
++carries on to get_image_address, which faults at address 0:
++
++    PW_WINE64 fault signal=0xb addr=0x0 rip=0x8008ef49a
++                                        ntdll+0xbf49a = __getauxval
++
++A title has no auxiliary vector, and this console's getauxval does not answer
++that with 0 -- it dereferences and faults. Report no image address instead,
++which is what every platform without an auxv does here; the value only reaches
++peb->CloudFileFlags.
++
++Only this caller is affected. The auxv is read in three other places and none
++is reachable: one is behind __linux__ and this is FreeBSD, and the other two
++are on the ARM feature paths.
++---
++diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
++index 592889315e..e90f83c79e 100644
++--- a/dlls/ntdll/unix/loader.c
+++++ b/dlls/ntdll/unix/loader.c
++@@ -1839,7 +1839,18 @@ static void load_wow64_ntdll( USHORT machine )
++  */
++ static ULONG_PTR get_image_address(void)
++ {
++-#ifdef HAVE_GETAUXVAL
+++#ifdef __PROSPERO__
+++    /* ⚠ A title has no auxiliary vector, and this console's getauxval does
+++     * not answer that with 0 -- it faults:
+++     *
+++     *     fault signal=0xb addr=0x0 rip=0x8008ef49a  (__getauxval)
+++     *
+++     * Report no image address, which is what every platform without an auxv
+++     * does here. Only this caller is affected: the auxv is read in three other
+++     * places and all of them are out of reach -- one behind __linux__, two on
+++     * the ARM feature paths. */
+++    return 0;
+++#elif defined(HAVE_GETAUXVAL)
++     ULONG_PTR size, num, phdr_addr = getauxval( AT_PHDR );
++     ElfW(Phdr) *phdr;
++ 
+diff --git a/wine/patches/0748-win32u-ps5-vulkan-hardware-cursor.patch b/wine/patches/0748-win32u-ps5-vulkan-hardware-cursor.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0748-win32u-ps5-vulkan-hardware-cursor.patch
+@@ -0,0 +1,76 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: prospero-win <prospero-win@invalid>
++Date: Fri, 2 Oct 2026 09:51:58 +0200
++Subject: [PATCH] win32u: Show the cursor over PS5 Vulkan frames with
++ VideoOut's hardware cursor.
++
++Vulkan frames reach the screen through the GPU driver's own video output
++(patch 0460), which the PS5 user driver does not compose, so a Direct3D
++game through DXVK showed no pointer in its menus (Half-Life 2). After
++each present, win32u hands the cursor the application set (straight-alpha
++ARGB from the user driver, NULL when hidden) and its place on the desktop
++to libvulkan.prx's pw_videoout_cursor, which shows it with VideoOut's
++hardware cursor over the swapchain's frames. OpenGL games, which draw
++through Mesa's Zink and present with Vulkan, get their pointer the same
++way. The cursor image is read under the screen lock, as the driver's own
++composition reads it.
++---
++ dlls/win32u/ps5drv.c | 24 ++++++++++++++++++++++++
++ dlls/win32u/vulkan.c |  7 +++++++
++ 2 files changed, 31 insertions(+)
++
++diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
++index 286d42d..ccc69c0 100644
++--- a/dlls/win32u/ps5drv.c
+++++ b/dlls/win32u/ps5drv.c
++@@ -716,6 +716,30 @@ static void ps5_SetCursor( HWND hwnd, HCURSOR handle )
++     TRACE( "cursor %p: %ux%u\n", handle, width, height );
++ }
++ 
+++#ifdef SONAME_LIBVULKAN
+++/* Vulkan frames reach the screen through the GPU driver's own video output
+++ * (patch 0460), which this driver does not compose, so after each present
+++ * libvulkan.prx shows the cursor with VideoOut's hardware cursor
+++ * (pw_videoout_cursor): the image, NULL when hidden, at its place on the
+++ * desktop, which the output shows whole. */
+++void ps5drv_vulkan_cursor( void *vulkan_handle )
+++{
+++    static int (*show)( const UINT32 *, UINT, UINT, INT, INT, UINT, UINT );
+++    static BOOL looked;
+++
+++    if (!looked)
+++    {
+++        looked = TRUE;
+++        show = dlsym( vulkan_handle, "pw_videoout_cursor" );
+++    }
+++    if (!show) return;
+++    pthread_mutex_lock( &screen_lock );
+++    show( cursor_width && cursor_height ? cursor_image : NULL, cursor_width, cursor_height,
+++          cursor.x - cursor_hotspot.x, cursor.y - cursor_hotspot.y, screen_width, screen_height );
+++    pthread_mutex_unlock( &screen_lock );
+++}
+++#endif
+++
++ static BOOL ps5_GetCursorPos( POINT *pos )
++ {
++     /* the server's position is the pointer's: every move goes through it */
++diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
++index cb64dc0..7fadce0 100644
++--- a/dlls/win32u/vulkan.c
+++++ b/dlls/win32u/vulkan.c
++@@ -2023,6 +2023,13 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
++ 
++     if (swapchains != swapchains_buffer) free( swapchains );
++ 
+++#ifdef WINE_PS5_USER_DRIVER
+++    {
+++        extern void ps5drv_vulkan_cursor( void *vulkan_handle );
+++        ps5drv_vulkan_cursor( vulkan_handle );
+++    }
+++#endif
+++
++     if (TRACE_ON( fps ))
++     {
++         static unsigned long frames, frames_total;
++-- 
++2.43.0
+diff --git a/wine/patches/0770-server-ps5-run-sync-requests-on-client-threads.patch b/wine/patches/0770-server-ps5-run-sync-requests-on-client-threads.patch
+--- a/wine/patches/0770-server-ps5-run-sync-requests-on-client-threads.patch
++++ b/wine/patches/0770-server-ps5-run-sync-requests-on-client-threads.patch
+@@ -1,49 +1,10 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+-From: prospero-win <prospero-win@invalid>
+-Date: Sun, 4 Oct 2026 02:00:00 +0200
+-Subject: [PATCH] server: Run sync requests on the client threads on PS5.
+-
+-In-process (patch 0110), every request still went from the client thread
+-through its request pipe to the server thread, woken from kqueue, and back
+-through the reply pipe: two thread switches and about eight system calls.
+-On the console that is 19-26 us per SetEvent, ReleaseSemaphore,
+-ReleaseMutex or zero-timeout wait, and GTA IV makes about 500 of them a
+-frame.
+-
+-The server is now guarded by a lock that its thread holds except while it
+-sleeps in kqueue/epoll, and ntdll runs the requests that only touch sync
+-objects and handles (select, event_op, release_mutex, release_semaphore,
+-the create and query requests of events, mutexes, semaphores and keyed
+-events, close_handle, dup_handle) on the calling thread through
+-pw_wineserver_call_direct, under that lock. A wait that cannot be
+-satisfied still returns STATUS_PENDING and the thread sleeps on its wait
+-pipe; the thread that signals the object writes that pipe itself, so
+-waking a waiter takes one thread switch instead of two.
+-
+-- The server thread drops a batch of events when a client thread removed
+-  or changed a poll user while it slept (the slot may now be another fd's)
+-  and polls again; the filters are level-triggered, so nothing is lost.
+-- A timeout that a client thread adds earlier than the one the main loop
+-  sleeps until wakes it through a pipe.
+-- A thread the server does not know (before init_thread, with another
+-  TEB, terminated) and every other request use the pipe as before, as does
+-  everything when the main loop falls back to poll().
+-- The open requests stay on the pipe: they carry the application's name
+-  buffer, which the server must not read on the client thread.
+-- WINE_PS5_SERVER_DIRECT=0, or a server module without the export, keeps
+-  every request on the pipe.
+----
+- dlls/ntdll/unix/server.c |  34 +++++++++
+- server/fd.c              |  99 ++++++++++++++++++++++++
+-server/request.c         | 164 +++++++++++++++++++++++++++++++++++++++
+- server/request.h         |   5 ++
+- 4 files changed, 302 insertions(+)
++Subject: [PATCH] server: run selected sync requests on client threads
+ 
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+-index bdfad82..340cbfb 100644
++index c7e0c6a..eea2eb1 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -317,6 +317,20 @@ ULONGLONG ps5_now_us(void)
++@@ -320,6 +320,20 @@ ULONGLONG ps5_now_us(void)
+      return (ULONGLONG)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+  }
+  
+@@ -64,7 +25,7 @@
+  unsigned int server_call_unlocked( void *req_ptr )
+  {
+      struct thread_data *data = get_thread_data();
+-@@ -324,6 +338,22 @@ unsigned int server_call_unlocked( void *req_ptr )
++@@ -327,6 +341,22 @@ unsigned int server_call_unlocked( void *req_ptr )
+      unsigned int ret;
+      ULONGLONG start = ps5_slow_log() ? ps5_now_us() : 0;
+  
+@@ -87,14 +48,15 @@
+      if ((ret = send_request( data->request_fd, req ))) return ret;
+      ret = wait_reply( data->reply_fd, req );
+      if (start && ps5_now_us() - start > 200000)
+-@@ -1491,6 +1521,10 @@ static int connect_inprocess_server(void)
++@@ -1546,6 +1576,11 @@ static int connect_inprocess_server(void)
+      register_server_thread = dlsym( module, "pw_wine_thread_register" );
+-     if ((fd = connect_server( nls_dir )) == -1)
++     if ((fd = connect_server( nls_dir, environ, getenv( "WINEPREFIX" ) )) == -1)
+          fatal_error( "the in-process server %s did not start\n", module_path );
+-+    /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
+++    /* WINE_PS5_SERVER_DIRECT=0 retains the server-thread request path. */
+ +    p = getenv( "WINE_PS5_SERVER_DIRECT" );
+ +    if (!p || strcmp( p, "0" )) call_server_direct = dlsym( module, "pw_wineserver_call_direct" );
+-+    fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
+++    fprintf( stderr, "wine-ps5: server requests on client threads: %s\n",
+++             call_server_direct ? "on" : "off" );
+      TRACE( "connected to the in-process server %s\n", module_path );
+      free( dir );
+      free( module_path );
+@@ -295,10 +257,10 @@
+  
+      if (events == -1)  /* stop waiting on this fd completely */
+ diff --git a/server/request.c b/server/request.c
+-index 08dd6cd..e2ae2c5 100644
++index 48033e2..e69a562 100644
+ --- a/server/request.c
+ +++ b/server/request.c
+-@@ -60,6 +60,9 @@
++@@ -63,6 +63,9 @@
+  #include "security.h"
+  #include "handle.h"
+  #include "request_handlers.h"
+@@ -308,7 +270,7 @@
+  
+  /* Some versions of glibc don't define this */
+  #ifndef SCM_RIGHTS
+-@@ -308,6 +311,139 @@ static void call_req_handler( struct thread *thread )
++@@ -337,6 +340,139 @@ static void call_req_handler( struct thread *thread )
+      current = NULL;
+  }
+  
+@@ -448,7 +410,7 @@
+  /* read a request from a thread */
+  void read_request( struct thread *thread )
+  {
+-@@ -524,6 +660,19 @@ static void master_socket_destroy( struct object *obj )
++@@ -586,6 +722,19 @@ static void master_socket_destroy( struct object *obj )
+  }
+  
+  #ifdef WINE_INPROCESS_SERVER
+@@ -468,7 +430,7 @@
+  /* receive one client socket sent by connect_inprocess_client */
+  static int receive_inprocess_client( int channel )
+  {
+-@@ -917,6 +1066,21 @@ void open_master_socket(void)
++@@ -1077,6 +1226,21 @@ void open_master_socket(void)
+          set_fd_events( master_socket->fd, POLLIN );
+          make_object_permanent( &master_socket->obj );
+          client_channel = channel[1];
+@@ -491,18 +453,14 @@
+          return;
+      }
+ diff --git a/server/request.h b/server/request.h
+-index 397f662..55ac3a9 100644
++index 9d03814..fe648a1 100644
+ --- a/server/request.h
+ +++ b/server/request.h
+-@@ -59,9 +59,14 @@ extern timeout_t monotonic_counter(void);
+- #define WINE_INPROCESS_SERVER 1
+- #endif
+- #ifdef WINE_INPROCESS_SERVER
+-+#include <pthread.h>
++@@ -62,6 +62,10 @@ extern timeout_t monotonic_counter(void);
+  extern int connect_inprocess_client(void);
+- extern int pw_wineserver_connect( const char *nls_dir );
++ extern int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix );
+  extern const char *inprocess_nls_dir;
+-+/* client threads running requests themselves (fd.c, request.c) */
+++/* Client threads executing selected sync requests under the server lock. */
+ +extern pthread_mutex_t inprocess_server_mutex;
+ +extern int inprocess_direct_ok;
+ +extern int inprocess_wake_fd;
+diff --git a/wine/patches/0771-server-drain-the-wake-pipe-with-poll.patch b/wine/patches/0771-server-drain-the-wake-pipe-with-poll.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/0771-server-drain-the-wake-pipe-with-poll.patch
+@@ -0,0 +1,44 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 09:20:00 +0000
++Subject: [PATCH] server: drain the in-process wake pipe with poll.
++
++The main loop empties its wake pipe with
++
++    while (read( get_unix_fd( fd ), buffer, sizeof(buffer) ) > 0);
++
++which needs a non-blocking descriptor to end. This console has none: it refuses
++both fcntl( F_SETFL, O_NONBLOCK ) and ioctl FIONBIO (see 0742), so that loop
++reads what the wake-up left and then waits, inside the server thread, for a byte
++nobody will send. The first timeout to arrive would have hung the server for
++good -- it has not bitten yet only because nothing has run long enough to need
++a timer.
++
++Ask poll what is there instead. Every other caller treats non-blocking mode as
++an optimisation; this is the one that depended on it for correctness.
++---
++diff --git a/server/request.c b/server/request.c
++index 8db8e9a8b8..7bd61e3e05 100644
++--- a/server/request.c
+++++ b/server/request.c
++@@ -743,7 +743,20 @@ static void inprocess_wake_poll_event( struct fd *fd, int event )
++ {
++     char buffer[64];
++ 
+++#ifdef __PROSPERO__
+++    /* ⚠ This descriptor is blocking and cannot be made otherwise (see
+++     * pw_set_nonblocking), so the loop below would not end: it reads what the
+++     * wake-up left, then waits inside the server thread for a byte nobody will
+++     * send. Read only what poll reports. */
+++    {
+++        struct pollfd wake = { get_unix_fd( fd ), POLLIN, 0 };
+++
+++        while (poll( &wake, 1, 0 ) > 0 && (wake.revents & POLLIN))
+++            if (read( wake.fd, buffer, sizeof(buffer) ) <= 0) break;
+++    }
+++#else
++     while (read( get_unix_fd( fd ), buffer, sizeof(buffer) ) > 0);
+++#endif
++ }
++ 
++ static const struct fd_ops inprocess_wake_fd_ops =
+diff --git a/wine/patches/0790-server-ps5-immediate-mutex-calls.patch b/wine/patches/0790-server-ps5-immediate-mutex-calls.patch
+--- a/wine/patches/0790-server-ps5-immediate-mutex-calls.patch
++++ b/wine/patches/0790-server-ps5-immediate-mutex-calls.patch
+@@ -1,25 +1,13 @@
+ From: Codex <codex@localhost>
+ Subject: [PATCH] server, ntdll: opt-in immediate mutex calls in process
+ 
+-For an immediately available ordinary mutex, use its authoritative server
+-object under the existing server lock without request-union marshalling or
+-select waiter allocation. Try the lock once; every ineligible operation
+-falls back without changing mutex state. Preserve native signal masking,
+-handle access, object references, ownership lists, recursion and abandonment.
+-
+-Default off: enable WINE_PS5_MUTEX_FAST=1 or a prefix-local pw_mutex_fast
+-file containing 1, with client-thread requests enabled.
+-This leaves the accepted 0770 gate and lock implementation unchanged.
+-Advisory non-mutex hints skip at most 63 calls before rechecking, and only
+-select the ordinary wait path. Immediate operations take one monotonic
+-watchdog timestamp; the server loop keeps its existing shared-time cadence.
+-Performance and complete Wine/PS5 compatibility require owner validation.
++Rebased connection context onto the explicit PS4 handoff; mutex logic unchanged.
+ 
+ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+-index 340cbfb..86f8a96 100644
++index eea2eb1..20c587f 100644
+ --- a/dlls/ntdll/unix/server.c
+ +++ b/dlls/ntdll/unix/server.c
+-@@ -320,6 +320,46 @@ ULONGLONG ps5_now_us(void)
++@@ -323,6 +323,46 @@ ULONGLONG ps5_now_us(void)
+  #ifdef WINE_INPROCESS_SERVER
+  /* the in-process server runs some requests on the calling thread */
+  static int (*call_server_direct)( unsigned int tid, client_ptr_t teb, struct __server_request_info *req );
+@@ -63,13 +51,13 @@
+ +    free( path );
+ +    return enabled;
+ +}
+-
++ 
+  /* the TEB this thread gave the server in init_thread or init_process_done */
+  static inline client_ptr_t inprocess_teb(void)
+-@@ -331,6 +371,63 @@ static inline client_ptr_t inprocess_teb(void)
++@@ -334,6 +374,63 @@ static inline client_ptr_t inprocess_teb(void)
+  }
+  #endif
+-
++ 
+ +void server_clear_fast_mutex_hint( HANDLE handle )
+ +{
+ +#ifdef WINE_INPROCESS_SERVER
+@@ -130,34 +118,35 @@
+  unsigned int server_call_unlocked( void *req_ptr )
+  {
+      struct thread_data *data = get_thread_data();
+-@@ -1524,7 +1621,10 @@ static int connect_inprocess_server(void)
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
++@@ -1579,8 +1676,11 @@ static int connect_inprocess_server(void)
++     /* WINE_PS5_SERVER_DIRECT=0 retains the server-thread request path. */
+      p = getenv( "WINE_PS5_SERVER_DIRECT" );
+      if (!p || strcmp( p, "0" )) call_server_direct = dlsym( module, "pw_wineserver_call_direct" );
+ +    if (call_server_direct && server_mutex_fast_enabled())
+ +        try_server_mutex = dlsym( module, "pw_wineserver_try_fast_mutex" );
+-     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
++     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n",
++              call_server_direct ? "on" : "off" );
+ +    fprintf( stderr, "wine-ps5: immediate mutex calls: %s\n", try_server_mutex ? "on" : "off" );
+      TRACE( "connected to the in-process server %s\n", module_path );
+      free( dir );
+      free( module_path );
+-@@ -2025,6 +2125,8 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
++@@ -2091,6 +2191,8 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE
+      unsigned int ret;
+      int fd = -1;
+-
++ 
+ +    /* Duplication can close a source, reuse a number or rewrite access. */
+ +    server_clear_fast_mutex_hints();
+      if (dest) *dest = 0;
+-
++ 
+      if ((options & DUPLICATE_CLOSE_SOURCE) && source_process != NtCurrentProcess())
+-@@ -2121,6 +2223,7 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
++@@ -2187,6 +2289,7 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
+      unsigned int ret;
+      int fd;
+-
++ 
+ +    server_clear_fast_mutex_hint( handle );
+      if (HandleToLong( handle ) >= ~5 && HandleToLong( handle ) <= ~0)
+          return STATUS_SUCCESS;
+-
++ 
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+ index 103be94..a2cb762 100644
+ --- a/dlls/ntdll/unix/sync.c
+@@ -181,7 +170,7 @@
+ @@ -1346,6 +1348,9 @@ NTSTATUS WINAPI NtReleaseMutant( HANDLE handle, LONG *prev_count )
+      if ((ret = inproc_release_mutex( handle, prev_count )) != STATUS_NOT_IMPLEMENTED)
+          return ret;
+-
++ 
+ +    if ((ret = server_try_fast_mutex( handle, 1, NULL, prev_count )) != STATUS_NOT_IMPLEMENTED)
+ +        return ret;
+ +
+@@ -191,7 +180,7 @@
+ @@ -2355,6 +2360,9 @@ NTSTATUS WINAPI NtWaitForSingleObject( HANDLE handle, BOOLEAN alertable, const L
+          return ret;
+      }
+-
++ 
+ +    if (!alertable && (ret = server_try_fast_mutex( handle, 0, timeout, NULL )) != STATUS_NOT_IMPLEMENTED)
+ +        return ret;
+ +
+@@ -204,7 +193,7 @@
+ +++ b/dlls/ntdll/unix/unix_private.h
+ @@ -245,6 +245,9 @@ extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_
+  extern void start_server( BOOL debug );
+-
++ 
+  extern unsigned int server_call_unlocked( void *req_ptr );
+ +extern unsigned int server_try_fast_mutex( HANDLE handle, int release, const LARGE_INTEGER *timeout,
+ +                                           LONG *prev_count );
+@@ -219,7 +208,7 @@
+ @@ -182,6 +182,42 @@ static const struct object_ops mutex_ops =
+      .destroy  = mutex_destroy,
+  };
+-
++ 
+ +#ifdef WINE_INPROCESS_SERVER
+ +/* Called with the server lock held. No cached handles, second ownership
+ + * state or waiter registration: the existing server object remains the
+@@ -260,12 +249,12 @@
+  {
+      struct list *ptr;
+ diff --git a/server/request.c b/server/request.c
+-index 6f68d95..344dc27 100644
++index e69a562..cd6cb6b 100644
+ --- a/server/request.c
+ +++ b/server/request.c
+-@@ -312,6 +312,55 @@ static void call_req_handler( struct thread *thread )
++@@ -341,6 +341,55 @@ static void call_req_handler( struct thread *thread )
+  }
+-
++ 
+  #ifdef WINE_INPROCESS_SERVER
+ +/* The caller blocks server signals, just as wine_server_call does. Return
+ + * 0 only after an immediately successful operation, 2 for an observed
+@@ -320,10 +309,10 @@
+   * handles and file opens, and never sleep in the server (a wait that cannot
+   * be satisfied returns STATUS_PENDING, and the thread then sleeps on its wait
+ diff --git a/server/request.h b/server/request.h
+-index 55ac3a9..671ce2f 100644
++index fe648a1..6099d9e 100644
+ --- a/server/request.h
+ +++ b/server/request.h
+-@@ -67,6 +67,8 @@ extern const char *inprocess_nls_dir;
++@@ -66,6 +66,8 @@ extern const char *inprocess_nls_dir;
+  extern pthread_mutex_t inprocess_server_mutex;
+  extern int inprocess_direct_ok;
+  extern int inprocess_wake_fd;
+@@ -333,13 +322,13 @@
+  extern void open_master_socket(void);
+  extern void close_master_socket( timeout_t timeout );
+ diff --git a/server/thread.c b/server/thread.c
+-index 5f4c432..0872dad 100644
++index 32afbe9..40d0fa9 100644
+ --- a/server/thread.c
+ +++ b/server/thread.c
+ @@ -400,6 +400,16 @@ static inline int is_thread_suspended( struct thread *thread )
+      return !thread->bypass_proc_suspend && thread->process->suspend;
+  }
+-
++ 
+ +#ifdef WINE_INPROCESS_SERVER
+ +/* A typed mutex call cannot deliver APCs or a suspend context. Keep those
+ + * operations, nested waits and suspended callers on the ordinary path. */
+diff --git a/wine/patches/0810-server-ps5-shared-mutex-word.patch b/wine/patches/0810-server-ps5-shared-mutex-word.patch
+--- a/wine/patches/0810-server-ps5-shared-mutex-word.patch
++++ b/wine/patches/0810-server-ps5-shared-mutex-word.patch
+@@ -726,7 +726,7 @@
+ +++ b/server/request.h
+ @@ -65,7 +65,15 @@ extern int pw_wineserver_connect( const char *nls_dir );
+  extern const char *inprocess_nls_dir;
+- /* client threads running requests themselves (fd.c, request.c) */
++ /* Client threads executing selected sync requests under the server lock. */
+  extern pthread_mutex_t inprocess_server_mutex;
+ -extern int inprocess_direct_ok;
+ +extern int inprocess_direct_ok; /* accessed with acquire/release atomic builtins */
+diff --git a/wine/patches/0820-ntdll-ps5-shared-mutex-client.patch b/wine/patches/0820-ntdll-ps5-shared-mutex-client.patch
+--- a/wine/patches/0820-ntdll-ps5-shared-mutex-client.patch
++++ b/wine/patches/0820-ntdll-ps5-shared-mutex-client.patch
+@@ -161,8 +161,8 @@
+              close_inproc_sync( handle );
+ 
+              SERVER_START_REQ( get_apc_result )
+-@@ -1621,8 +1725,17 @@ static int connect_inprocess_server(void)
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
++@@ -1621,9 +1725,18 @@ static int connect_inprocess_server(void)
++     /* WINE_PS5_SERVER_DIRECT=0 retains the server-thread request path. */
+      p = getenv( "WINE_PS5_SERVER_DIRECT" );
+      if (!p || strcmp( p, "0" )) call_server_direct = dlsym( module, "pw_wineserver_call_direct" );
+ -    if (call_server_direct && server_mutex_fast_enabled())
+@@ -177,7 +177,8 @@
+ +            shared_mutex_backend = api;
+ +    }
+ +    fprintf( stderr, "wine-ps5: shared mutex backend: %s\n", shared_mutex_backend ? "on" : "off" );
+-     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
++     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n",
++              call_server_direct ? "on" : "off" );
+      fprintf( stderr, "wine-ps5: immediate mutex calls: %s\n", try_server_mutex ? "on" : "off" );
+      TRACE( "connected to the in-process server %s\n", module_path );
+ @@ -1955,6 +2068,9 @@ size_t server_init_process(void)
+diff --git a/wine/patches/0880-wine-ps5-runtime-defaults.patch b/wine/patches/0880-wine-ps5-runtime-defaults.patch
+--- a/wine/patches/0880-wine-ps5-runtime-defaults.patch
++++ b/wine/patches/0880-wine-ps5-runtime-defaults.patch
+@@ -58,7 +58,7 @@
+ 
+      return wine_server_client_ptr( teb64 ? (void *)teb64 : (void *)teb );
+  }
+-@@ -1716,27 +1717,27 @@
++@@ -1716,28 +1717,28 @@
+      if (!module_path || !nls_dir) fatal_error( "out of memory\n" );
+ 
+      if (!(module = dlopen( module_path, RTLD_NOW )))
+@@ -66,9 +66,9 @@
+      if (!(connect_server = dlsym( module, "pw_wineserver_connect" )))
+          fatal_error( "%s has no pw_wineserver_connect\n", module_path );
+      register_server_thread = dlsym( module, "pw_wine_thread_register" );
+-     if ((fd = connect_server( nls_dir )) == -1)
++     if ((fd = connect_server( nls_dir, environ, getenv( "WINEPREFIX" ) )) == -1)
+          fatal_error( "the in-process server %s did not start\n", module_path );
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
++     /* WINE_PS5_SERVER_DIRECT=0 retains the server-thread request path. */
+      p = getenv( "WINE_PS5_SERVER_DIRECT" );
+      if (!p || strcmp( p, "0" )) call_server_direct = dlsym( module, "pw_wineserver_call_direct" );
+ -    if (call_server_direct && server_mutex_switch_enabled( "WINE_PS5_MUTEX_FAST", "pw_mutex_fast" ))
+@@ -84,7 +84,8 @@
+              shared_mutex_backend = api;
+      }
+      fprintf( stderr, "wine-ps5: shared mutex backend: %s\n", shared_mutex_backend ? "on" : "off" );
+-     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
++     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n",
++              call_server_direct ? "on" : "off" );
+      fprintf( stderr, "wine-ps5: immediate mutex calls: %s\n", try_server_mutex ? "on" : "off" );
+      TRACE( "connected to the in-process server %s\n", module_path );
+      free( dir );
+diff --git a/wine/patches/0882-server-ps5-round-robin-scheduling-and-priorities.patch b/wine/patches/0882-server-ps5-round-robin-scheduling-and-priorities.patch
+--- a/wine/patches/0882-server-ps5-round-robin-scheduling-and-priorities.patch
++++ b/wine/patches/0882-server-ps5-round-robin-scheduling-and-priorities.patch
+@@ -51,10 +51,10 @@
+  static int (*register_server_thread)( long tid, pthread_t thread );
+ @@ -1723,6 +1736,7 @@ static int connect_inprocess_server(void)
+      register_server_thread = dlsym( module, "pw_wine_thread_register" );
+-     if ((fd = connect_server( nls_dir )) == -1)
++     if ((fd = connect_server( nls_dir, environ, getenv( "WINEPREFIX" ) )) == -1)
+          fatal_error( "the in-process server %s did not start\n", module_path );
+ +    unregister_server_thread = dlsym( module, "pw_wine_thread_unregister" );
+-     /* WINE_PS5_SERVER_DIRECT=0 sends every request through the server thread */
++     /* WINE_PS5_SERVER_DIRECT=0 retains the server-thread request path. */
+      p = getenv( "WINE_PS5_SERVER_DIRECT" );
+      if (!p || strcmp( p, "0" )) call_server_direct = dlsym( module, "pw_wineserver_call_direct" );
+ @@ -1757,6 +1771,7 @@ static void register_inprocess_thread( int tid )
+diff --git a/wine/patches/0886-server-ps5-shared-sync-lifetime.patch b/wine/patches/0886-server-ps5-shared-sync-lifetime.patch
+--- a/wine/patches/0886-server-ps5-shared-sync-lifetime.patch
++++ b/wine/patches/0886-server-ps5-shared-sync-lifetime.patch
+@@ -666,13 +666,13 @@
+ diff --git a/server/request.h b/server/request.h
+ --- a/server/request.h
+ +++ b/server/request.h
+-@@ -60,6 +60,7 @@
++@@ -60,5 +60,7 @@
+  #endif
+  #ifdef WINE_INPROCESS_SERVER
+- #include <pthread.h>
+++#include <pthread.h>
+ +#include "ps5_sync.h"
+  extern int connect_inprocess_client(void);
+- extern int pw_wineserver_connect( const char *nls_dir );
++ extern int pw_wineserver_connect( const char *nls_dir, char **envp, const char *prefix );
+  extern const char *inprocess_nls_dir;
+ diff --git a/server/ps5_sync.h b/server/ps5_sync.h
+ new file mode 100644
+diff --git a/wine/patches/0887-ntdll-ps5-shared-sync-client.patch b/wine/patches/0887-ntdll-ps5-shared-sync-client.patch
+--- a/wine/patches/0887-ntdll-ps5-shared-sync-client.patch
++++ b/wine/patches/0887-ntdll-ps5-shared-sync-client.patch
+@@ -177,7 +177,7 @@
+      if (slot) __atomic_store_n( slot, 0, __ATOMIC_RELEASE );
+  #endif
+  }
+-@@ -1735,6 +1874,15 @@
++@@ -1735,7 +1874,15 @@
+          if (query && pw_mutex_backend_valid( api = query( PW_MUTEX_BACKEND_VERSION )))
+              shared_mutex_backend = api;
+      }
+@@ -191,7 +191,9 @@
+ +    }
+ +    fprintf(stderr, "wine-ps5: shared event/semaphore backend: %s\n", shared_sync_backend ? "on" : "off");
+      fprintf( stderr, "wine-ps5: shared mutex backend: %s\n", shared_mutex_backend ? "on" : "off" );
+-     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
++-    fprintf( stderr, "wine-ps5: server requests on client threads: %s\n",
++-             call_server_direct ? "on" : "off" );
+++    fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
+      fprintf( stderr, "wine-ps5: immediate mutex calls: %s\n", try_server_mutex ? "on" : "off" );
+ diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+ --- a/dlls/ntdll/unix/sync.c
+diff --git a/wine/patches/1033-server-log-fatal-protocol-error-to-klog.patch b/wine/patches/1033-server-log-fatal-protocol-error-to-klog.patch
+--- a/wine/patches/1033-server-log-fatal-protocol-error-to-klog.patch
++++ b/wine/patches/1033-server-log-fatal-protocol-error-to-klog.patch
+@@ -11,7 +11,7 @@
+ diff --git a/server/request.c b/server/request.c
+ --- a/server/request.c
+ +++ b/server/request.c
+-@@ -145,6 +145,25 @@ void fatal_protocol_error( struct thread *thread, const char *err, ... )
++@@ -145,6 +145,22 @@ void fatal_protocol_error( struct thread *thread, const char *err, ... )
+      fprintf( stderr, "Protocol error:%04x: ", thread->id );
+      vfprintf( stderr, err, args );
+      va_end( args );
+diff --git a/wine/patches/1034-server-nonblocking-through-ioctl.patch b/wine/patches/1034-server-nonblocking-through-ioctl.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/1034-server-nonblocking-through-ioctl.patch
+@@ -0,0 +1,174 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: ps4-gladius <ps4-gladius@invalid>
++Date: Thu, 8 Oct 2026 09:40:00 +0000
++Subject: [PATCH] server: this console cannot set non-blocking mode.
++
++0741 named the failure:
++
++    init_thread 0024 FAILED: O_NONBLOCK on the reply pipe refused
++                     (reply_fd=33 wait_fd=35 errno=13) in flight:
++
++errno 13 is EACCES. fcntl( fd, F_SETFL, O_NONBLOCK ) is refused here, and so is
++ioctl FIONBIO, the ioctl FreeBSD has always carried for the same job -- both
++measured on a pipe. This console's fcntl is selectively implemented; F_DUPFD and
++F_GETFD are refused as well. Nothing sets the flag, so descriptors stay
++blocking, and the question is no longer how to ask but what depends on it.
++
++The failure was fatal in three places and ignored in six. It need not be fatal
++anywhere: every caller in the server writes one small reply to a client already
++waiting for it, which does not block in practice. One helper answers for all
++nine sites, says once through klog that the mode is unavailable, and reports
++success so the thread keeps its reply pipe.
++
++The one caller that genuinely needs the flag is the main loop's drain of its
++wake pipe, and patch 0771 gives it poll() instead -- the unguarded drain loop
++would wait forever for a byte nobody sends.
++
++The empty in-flight list in that diagnostic is not a second fault: both
++descriptors were found, and thread_get_inflight_fd clears the slot it answers
++from, so it confirms the handover in 0737 and 0738 works.
++---
++diff --git a/server/fd.c b/server/fd.c
++index 7cfcbf44c4..22795fe917 100644
++--- a/server/fd.c
+++++ b/server/fd.c
++@@ -25,6 +25,9 @@
++ #include <dirent.h>
++ #include <errno.h>
++ #include <fcntl.h>
+++#ifdef __PROSPERO__
+++#include <sys/ioctl.h>
+++#endif
++ #include <limits.h>
++ #include <signal.h>
++ #include <stdarg.h>
++@@ -2146,5 +2149,42 @@ int is_fd_overlapped( struct fd *fd )
++ }
++ 
++ /* retrieve the unix fd for an object */
+++/* put a descriptor in non-blocking mode, if this platform can.
+++ *
+++ * ⚠ PS4 cannot. fcntl( fd, F_SETFL, O_NONBLOCK ) is refused with EACCES,
+++ * measured on the reply pipe in init_thread, and so is ioctl FIONBIO, the ioctl
+++ * FreeBSD has always carried for the same job. This console's fcntl is
+++ * selectively implemented -- F_DUPFD and F_GETFD are refused as well -- and
+++ * nothing else sets the flag, so descriptors here simply stay blocking.
+++ *
+++ * Report that once and return success. Every caller in the server treats
+++ * non-blocking mode as an optimisation: they write one small reply to a client
+++ * that is already waiting for it, so the write does not block in practice. The
+++ * exception is the main loop's drain of its wake pipe, which cannot spin on
+++ * read() without a non-blocking descriptor and asks poll() what is there
+++ * instead -- see inprocess_wake_poll_event. */
+++int pw_set_nonblocking( int fd )
+++{
+++#ifdef __PROSPERO__
+++    static int reported;
+++    int on = 1;
+++
+++    if (!ioctl( fd, FIONBIO, &on )) return 0;
+++    if (!fcntl( fd, F_SETFL, O_NONBLOCK )) return 0;
+++    if (!reported++)
+++    {
+++        extern int sceKernelDebugOutText( int channel, const char *text );
+++        char line[160];
+++        snprintf( line, sizeof(line),
+++                  "wineserver: this console cannot set non-blocking mode (errno %d); "
+++                  "descriptors stay blocking\n", errno );
+++        sceKernelDebugOutText( 0, line );
+++    }
+++    return 0;
+++#else
+++    return fcntl( fd, F_SETFL, O_NONBLOCK );
+++#endif
+++}
+++
++ int get_unix_fd( struct fd *fd )
++ {
++diff --git a/server/file.h b/server/file.h
++index a1c8a3f636..d9d93dd385 100644
++--- a/server/file.h
+++++ b/server/file.h
++@@ -294,4 +294,7 @@ static inline int async_queued( struct async_queue *queue )
++ #define FILE_MAPPING_WRITE  0x40000000  /* set for writable shared mappings */
++ #define FILE_MAPPING_ACCESS 0x20000000  /* set for all mappings */
++ 
+++/* put a descriptor in non-blocking mode (fcntl is refused on PS4) */
+++extern int pw_set_nonblocking( int fd );
+++
++ #endif  /* __WINE_SERVER_FILE_H */
++diff --git a/server/process.c b/server/process.c
++index 49211ef01d..3a1d4d830e 100644
++--- a/server/process.c
+++++ b/server/process.c
++@@ -1144,7 +1144,7 @@ DECL_HANDLER(new_process)
++     }
++     if (params.root) release_object( params.root );  /* unused */
++ 
++-    if (fcntl( socket_fd, F_SETFL, O_NONBLOCK ) == -1)
+++    if (pw_set_nonblocking( socket_fd ) == -1)
++     {
++         set_error( STATUS_INVALID_HANDLE );
++         close( socket_fd );
++diff --git a/server/request.c b/server/request.c
++index 1544adc178..693836a120 100644
++--- a/server/request.c
+++++ b/server/request.c
++@@ -765,7 +765,7 @@ static void master_socket_poll_event( struct fd *fd, int event )
++         int client = accept( get_unix_fd( master_socket->fd ), (struct sockaddr *) &dummy, &len );
++ #endif
++         if (client == -1) return;
++-        fcntl( client, F_SETFL, O_NONBLOCK );
+++        pw_set_nonblocking( client );
++         if ((process = create_process( client, NULL, 0, NULL, NULL, NULL, 0, NULL )))
++         {
++             struct thread *thread = create_thread( -1, process, NULL );
++diff --git a/server/sock.c b/server/sock.c
++index 0716b3f71f..12eead9030 100644
++--- a/server/sock.c
+++++ b/server/sock.c
++@@ -1964,7 +1964,7 @@ static int init_socket( struct sock *sock, int family, int type, int protocol )
++         else set_win32_error( sock_get_error( errno ));
++         return -1;
++     }
++-    fcntl(sockfd, F_SETFL, O_NONBLOCK); /* make socket nonblocking */
+++    pw_set_nonblocking( sockfd ); /* make socket nonblocking */
++ 
++     if (family == WS_AF_IPX && protocol >= WS_NSPROTO_IPX && protocol <= WS_NSPROTO_IPX + 255)
++     {
++@@ -2060,7 +2060,7 @@ static int accept_new_fd( struct sock *sock )
++     socklen_t slen = sizeof(saddr);
++     int acceptfd = accept( get_unix_fd(sock->fd), &saddr, &slen );
++     if (acceptfd != -1)
++-        fcntl( acceptfd, F_SETFL, O_NONBLOCK );
+++        pw_set_nonblocking( acceptfd );
++     else
++         set_error( sock_get_ntstatus( errno ));
++     return acceptfd;
++@@ -3800,7 +3800,7 @@ static void ifchange_poll_event( struct fd *fd, int event )
++         set_error( sock_get_ntstatus( errno ));
++         return NULL;
++     }
++-    fcntl( unix_fd, F_SETFL, O_NONBLOCK ); /* make socket nonblocking */
+++    pw_set_nonblocking( unix_fd ); /* make socket nonblocking */
++     memset( &addr, 0, sizeof(addr) );
++     addr.nl_family = AF_NETLINK;
++     addr.nl_groups = RTMGRP_IPV4_IFADDR;
++diff --git a/server/thread.c b/server/thread.c
++index 6a870dea47..cbd47f5955 100644
++--- a/server/thread.c
+++++ b/server/thread.c
++@@ -1774,7 +1774,7 @@ DECL_HANDLER(new_thread)
++             goto done;
++         }
++     }
++-    else if (request_fd == -1 || fcntl( request_fd, F_SETFL, O_NONBLOCK ) == -1)
+++    else if (request_fd == -1 || pw_set_nonblocking( request_fd ) == -1)
++     {
++         if (request_fd != -1) close( request_fd );
++         set_error( STATUS_INVALID_HANDLE );
++@@ -1882,3 +1882,3 @@ static int init_thread( struct thread *thread, int reply_fd, int wait_fd )
++ 
++-    if (fcntl( reply_fd, F_SETFL, O_NONBLOCK ) == -1) goto error;
+++    if (pw_set_nonblocking( reply_fd ) == -1) goto error;
++ 
+diff --git a/wine/patches/1049-kernelbase-log-x86-fault-context-without-debugger.patch b/wine/patches/1049-kernelbase-log-x86-fault-context-without-debugger.patch
+--- a/wine/patches/1049-kernelbase-log-x86-fault-context-without-debugger.patch
++++ b/wine/patches/1049-kernelbase-log-x86-fault-context-without-debugger.patch
+@@ -1,3 +1,5 @@
++Subject: [PATCH] kernelbase: log x86 fault context without debugger
++
+ diff --git a/dlls/kernelbase/debug.c b/dlls/kernelbase/debug.c
+ index 579b70d542..916c4d6d6a 100644
+ --- a/dlls/kernelbase/debug.c
+diff --git a/wine/patches/1069-ntdll-log-native-libkernel-resolver-failure.patch b/wine/patches/1069-ntdll-log-native-libkernel-resolver-failure.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/1069-ntdll-log-native-libkernel-resolver-failure.patch
+@@ -0,0 +1,153 @@
++From: Zak Peirce <zak@orbis-win>
++Subject: ntdll: report why the PS4 native libkernel resolver declines
++
++The ABI-v4 runs show successful signal registration and delivery calls but no
++handler entry, followed by a native provider with caps=0 and syscall=0. The
++resolver currently collapses every validation failure to zero, hiding whether
++module lookup, module layout, syscall-stub validation, or sigaction probing
++failed. Preserve its fail-closed behavior and add a compact reason code plus
++module lookup result to the existing Wine trace. This is diagnostic only; it
++does not relax signal-frame checks or enable the native backend.
++
++--- a/dlls/ntdll/unix/native_libkernel_resolver.h
+++++ b/dlls/ntdll/unix/native_libkernel_resolver.h
++@@ -9,9 +9,23 @@
++ #define NATIVE_LIBKERNEL_SYS_GETPID 20
++ #define NATIVE_LIBKERNEL_SYS_GETPPID 39
++ #define NATIVE_LIBKERNEL_SYS_SIGACTION 416
+++enum native_libkernel_resolve_reason {
+++    NATIVE_LIBKERNEL_RESOLVE_OK,
+++    NATIVE_LIBKERNEL_RESOLVE_BAD_ARGUMENT,
+++    NATIVE_LIBKERNEL_RESOLVE_BAD_INFO_SIZE,
+++    NATIVE_LIBKERNEL_RESOLVE_WRONG_MODULE,
+++    NATIVE_LIBKERNEL_RESOLVE_BAD_SEGMENT_COUNT,
+++    NATIVE_LIBKERNEL_RESOLVE_NO_GETPPID_STUB,
+++    NATIVE_LIBKERNEL_RESOLVE_BAD_PROCESS_IDS,
+++    NATIVE_LIBKERNEL_RESOLVE_GETPID_MISMATCH,
+++    NATIVE_LIBKERNEL_RESOLVE_GETPPID_MISMATCH,
+++    NATIVE_LIBKERNEL_RESOLVE_SIGACTION_QUERY,
+++    NATIVE_LIBKERNEL_RESOLVE_HANDLER_OUTSIDE_TEXT
+++};
++ struct native_libkernel_entries {
++     uintptr_t syscall;  /* a syscall instruction inside libkernel's code */
++     uintptr_t sysarch;
+++    unsigned int reason;
++ };
++ struct native_libkernel_ops {
++     /* runs the system call NUMBER through the instruction at ENTRY */
++--- a/dlls/ntdll/unix/native_libkernel_resolver.c
+++++ b/dlls/ntdll/unix/native_libkernel_resolver.c
++@@ -26,12 +26,28 @@
++     uint32_t count;
++     if(!entries) return 0;
++     memset(entries,0,sizeof(*entries));
++-    if(!info || length!=0x160 || !ops || !ops->syscall_at || !getppid_import || !sysarch_import) return 0;
++-    if(read64(info)!=0 && read64(info)!=0x160) return 0;
+++    if(!info || length!=0x160 || !ops || !ops->syscall_at || !getppid_import || !sysarch_import)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_BAD_ARGUMENT;
+++        return 0;
+++    }
+++    if(read64(info)!=0 && read64(info)!=0x160)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_BAD_INFO_SIZE;
+++        return 0;
+++    }
++     /* the ELF loader's libkernel is a different module and is not supported */
++-    if(memcmp(info+8,"libkernel.sprx",sizeof("libkernel.sprx"))) return 0;
+++    if(memcmp(info+8,"libkernel.sprx",sizeof("libkernel.sprx")))
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_WRONG_MODULE;
+++        return 0;
+++    }
++     count=read32(info+0x148);
++-    if(!count || count>4) return 0;
+++    if(!count || count>4)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_BAD_SEGMENT_COUNT;
+++        return 0;
+++    }
++     entry=getppid_import+NATIVE_LIBKERNEL_STUB_SYSCALL;
++     for(unsigned i=0;i<count;i++)
++     {
++@@ -40,18 +56,43 @@
++         if(!(read32(s+12)&4) || start>UINTPTR_MAX-size) continue;
++         if(getppid_import>=start && entry+2<=start+size) { text=start; text_end=start+size; }
++     }
++-    if(!text) return 0;
+++    if(!text)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_NO_GETPPID_STUB;
+++        return 0;
+++    }
++     /* the instruction runs whichever call is in %rax: getpid and getppid
++      * swapped, which only a real syscall instruction can answer */
++-    if(ops->pid<=0 || ops->ppid<0 || ops->pid==ops->ppid) return 0;
++-    if(ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_GETPID,0,0,0)!=ops->pid ||
++-       ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_GETPPID,0,0,0)!=ops->ppid) return 0;
+++    if(ops->pid<=0 || ops->ppid<0 || ops->pid==ops->ppid)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_BAD_PROCESS_IDS;
+++        return 0;
+++    }
+++    if(ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_GETPID,0,0,0)!=ops->pid)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_GETPID_MISMATCH;
+++        return 0;
+++    }
+++    if(ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_GETPPID,0,0,0)!=ops->ppid)
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_GETPPID_MISMATCH;
+++        return 0;
+++    }
++     /* a raw sigaction query sees the kernel's registration: none, or
++      * libkernel's own entry when its wrapper installed a handler */
++     memset(&action,0,sizeof(action));
++-    if(ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_SIGACTION,11 /* SIGSEGV */,0,(long)(uintptr_t)&action)) return 0;
++-    if(action.handler>1 && (action.handler<text || action.handler>=text_end)) return 0;
+++    if(ops->syscall_at(entry,NATIVE_LIBKERNEL_SYS_SIGACTION,11 /* SIGSEGV */,0,(long)(uintptr_t)&action))
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_SIGACTION_QUERY;
+++        return 0;
+++    }
+++    if(action.handler>1 && (action.handler<text || action.handler>=text_end))
+++    {
+++        entries->reason=NATIVE_LIBKERNEL_RESOLVE_HANDLER_OUTSIDE_TEXT;
+++        return 0;
+++    }
++     entries->syscall=entry;
++     entries->sysarch=sysarch_import;
+++    entries->reason=NATIVE_LIBKERNEL_RESOLVE_OK;
++     return 1;
++ }
++--- a/dlls/ntdll/unix/signal_x86_64.c
+++++ b/dlls/ntdll/unix/signal_x86_64.c
++@@ -150,12 +150,27 @@
++ static void pw_native_resolve_kernel(void)
++ {
++     unsigned char info[0x160] = {0};
+++    char module_name[33];
++     uint64_t size = sizeof(info);
+++    uint32_t segment_count;
++     struct native_libkernel_ops ops = { pw_native_syscall_at, getpid(), getppid() };
+++    int info_status;
++     memcpy( info, &size, sizeof(size) );
++-    if (sceKernelGetModuleInfo( 0x2001, info )) return;
+++    info_status = sceKernelGetModuleInfo( 0x2001, info );
+++    if (info_status)
+++    {
+++        ERR_(seh)( "PW_NATIVE_RESOLVE module_info handle=0x2001 rc=%d\n", info_status );
+++        return;
+++    }
+++    memcpy( module_name, info + 8, 32 );
+++    module_name[32] = 0;
+++    memcpy( &segment_count, info + 0x148, sizeof(segment_count) );
++     native_libkernel_resolve( info, sizeof(info), (uintptr_t)getppid,
++                               (uintptr_t)sysarch, &ops, &pw_native_kernel );
+++    ERR_(seh)( "PW_NATIVE_RESOLVE module=%s segments=%u getppid=%p sysarch=%p pid=%ld ppid=%ld result=%u reason=%u syscall=%p\n",
+++               module_name, segment_count, (void *)getppid,
+++               (void *)sysarch, ops.pid, ops.ppid, !!pw_native_kernel.syscall,
+++               pw_native_kernel.reason, (void *)pw_native_kernel.syscall );
++ }
++ static int pw_native_sigaction( int signal, const struct sigaction *action,
++                                 struct sigaction *previous )
+diff --git a/wine/patches/1070-ntdll-report-native-signal-delivery-state.patch b/wine/patches/1070-ntdll-report-native-signal-delivery-state.patch
+new file mode 100644
+--- /dev/null
++++ b/wine/patches/1070-ntdll-report-native-signal-delivery-state.patch
+@@ -0,0 +1,89 @@
++From: Zak Peirce <zak@orbis-win>
++Subject: ntdll: log the PS4 native signal action and delivery state
++
++The native frame probe currently reports successful action, mask and send calls
++but zero handler hits. Read the installed action back and record mask/pending
++state immediately after self-send. Use SIGWINCH for the ordinary user-signal
++probe; SIGUSR2 aliases the PS4 reserved SIGTHR signal. This is diagnostic and
++keeps the native backend fail-closed.
++
++--- a/dlls/ntdll/unix/signal_x86_64.c
+++++ b/dlls/ntdll/unix/signal_x86_64.c
++@@ -27,6 +27,7 @@
++ #include "config.h"
++ 
++ #include <assert.h>
+++#include <errno.h>
++ #include <pthread.h>
++ #include <signal.h>
++ #include <dlfcn.h>
++@@ -1097,31 +1130,59 @@
++ 
++ static BOOL pw_native_frame_verified(void)
++ {
++-    struct sigaction probe = {0}, previous = {0};
++-    sigset_t unblock, mask;
+++    struct sigaction probe = {0}, previous = {0}, installed = {0};
+++    sigset_t unblock, mask, current_mask, pending;
++     UINT64 fsbase = 0;
++     UINT mxcsr, marked;
+++    int action_rc, action_errno, query_rc, unblock_rc, send_rc, mask_query_rc, pending_rc;
+++    int restore_mask_rc, restore_action_rc, restore_errno;
++     BOOL ok;
++ 
++     if (amd64_get_fsbase( &fsbase ) || !fsbase) return FALSE;
++     probe.sa_sigaction = pw_native_frame_handler;
++     probe.sa_flags = SA_SIGINFO;
++     sigemptyset( &probe.sa_mask );
++-    if (pw_native_sigaction( SIGUSR2, &probe, &previous ) == -1) return FALSE;
+++    /* SIGUSR2 is signal 31 in this PS4 ABI; the kernel also uses that number
+++     * for SIGTHR. pthread_kill(self, SIGUSR2) enters the reserved thread-signal
+++     * path instead of the ordinary user signal frame and terminates startup.
+++     * SIGWINCH is an ordinary, otherwise-unused signal here and exercises the
+++     * same signal frame without colliding with Wine's SIGUSR1 suspend signal. */
+++    errno = 0;
+++    action_rc = pw_native_sigaction( SIGWINCH, &probe, &previous );
+++    action_errno = errno;
+++    if (action_rc == -1)
+++    {
+++        ERR_(seh)( "PW_NATIVE_FRAME setup sig=%d sigaction_rc=%d errno=%d\n",
+++                   SIGWINCH, action_rc, action_errno );
+++        return FALSE;
+++    }
+++    query_rc = pw_native_sigaction( SIGWINCH, NULL, &installed );
++     sigemptyset( &unblock );
++-    sigaddset( &unblock, SIGUSR2 );
++-    pthread_sigmask( SIG_UNBLOCK, &unblock, &mask );
+++    sigaddset( &unblock, SIGWINCH );
+++    unblock_rc = pthread_sigmask( SIG_UNBLOCK, &unblock, &mask );
+++    mask_query_rc = pthread_sigmask( SIG_SETMASK, NULL, &current_mask );
+++    pw_frame_hits = 0;
++     __asm__ volatile( "stmxcsr %0" : "=m"(mxcsr) );
++     marked = (mxcsr & ~0x6000) | 0x2000;  /* round down: visible and harmless */
++     __asm__ volatile( "ldmxcsr %0" :: "m"(marked) );
++-    pthread_kill( pthread_self(), SIGUSR2 );
+++    send_rc = pthread_kill( pthread_self(), SIGWINCH );
+++    pending_rc = sigpending( &pending );
++     __asm__ volatile( "ldmxcsr %0" :: "m"(mxcsr) );
++-    pthread_sigmask( SIG_SETMASK, &mask, NULL );
++-    pw_native_sigaction( SIGUSR2, &previous, NULL );
+++    restore_mask_rc = pthread_sigmask( SIG_SETMASK, &mask, NULL );
+++    errno = 0;
+++    restore_action_rc = pw_native_sigaction( SIGWINCH, &previous, NULL );
+++    restore_errno = errno;
++     ok = pw_frame_hits == 1 && pw_frame_mxcsr == marked && pw_frame_fsbase == fsbase;
++     if (!ok)
++-        ERR_(seh)( "PW_NATIVE_FRAME unverified hits=%d mxcsr=%#x/%#x fsbase=%#llx/%#llx\n", pw_frame_hits,
++-                   pw_frame_mxcsr, marked, (unsigned long long)pw_frame_fsbase, (unsigned long long)fsbase );
+++        ERR_(seh)( "PW_NATIVE_FRAME unverified sig=%d action_rc=%d action_errno=%d query_rc=%d handler=%p/%p flags=%#x/%#x unblock_rc=%d old_blocked=%d mask_query_rc=%d now_blocked=%d send_rc=%d pending_rc=%d pending=%d restore_mask_rc=%d restore_action_rc=%d restore_errno=%d hits=%d mxcsr=%#x/%#x fsbase=%#llx/%#llx\n",
+++                   SIGWINCH, action_rc, action_errno, query_rc,
+++                   (void *)installed.sa_sigaction, (void *)pw_native_frame_handler,
+++                   installed.sa_flags, probe.sa_flags, unblock_rc,
+++                   sigismember( &mask, SIGWINCH ), mask_query_rc,
+++                   mask_query_rc ? -1 : sigismember( &current_mask, SIGWINCH ),
+++                   send_rc, pending_rc, pending_rc ? -1 : sigismember( &pending, SIGWINCH ), restore_mask_rc,
+++                   restore_action_rc, restore_errno, pw_frame_hits, pw_frame_mxcsr, marked,
+++                   (unsigned long long)pw_frame_fsbase, (unsigned long long)fsbase );
++     return ok;
++ }
++ 
+diff --git a/wine/ps5/pw_ws2_32_libc.c b/wine/ps5/pw_ws2_32_libc.c
+--- a/wine/ps5/pw_ws2_32_libc.c
++++ b/wine/ps5/pw_ws2_32_libc.c
+@@ -71,6 +71,16 @@
+     return &pw_h_errno;
+ }
+ 
++#ifdef PW_PS4_DNS
++/* The PS4 SDK's netdb.h uses this spelling, while FreeBSD uses __h_errno.
++ * Both consumers must see the resolver's TLS error, not libc's separate
++ * zero-initialized global (which turns a failed lookup into success). */
++int *__h_errno_location(void)
++{
++    return __h_errno();
++}
++#endif
++
+ /* One answer, struct pw_ws2_address: an address family and the address's
+  * bytes (pw_ws2_32_resolver.h, shared with the host test's backend). */
+ 
+diff --git a/wine/ps5/vulkan-wire.md b/wine/ps5/vulkan-wire.md
+--- a/wine/ps5/vulkan-wire.md
++++ b/wine/ps5/vulkan-wire.md
+@@ -75,7 +75,7 @@
+ 
+ ### Opcode isolation mask
+ 
+-`PW_VK_BATCH_MASK` is an optional PE32 diagnostic setting read once with batching initialization. Unset preserves all seven existing categories (`127` or `0x7f`). Decimal and `0x` hexadecimal values from 0 through 127 are accepted; signs, whitespace, trailing text, out-of-range values, and oversized strings disable batching. `PW_VK_BATCH=1` is still required. The mask changes no wire or capability ABI and is independent of `PW_VK_BATCH_STATS=1`.
++`PW_VK_BATCH_MASK` is an optional PE32 diagnostic setting read once with batching initialization. Unset preserves all seven existing categories and generated records when the backend supports v2 or async. An explicit valid mask, including `127` or `0x7f`, restricts encoding to the seven v1 categories. Decimal and `0x` hexadecimal values from 0 through 127 are accepted; signs, whitespace, trailing text, out-of-range values, and oversized strings disable batching. `PW_VK_BATCH=1` is still required. The mask changes no wire or capability ABI and is independent of `PW_VK_BATCH_STATS=1`.
+ 
+ | Bit | Value | Category |
+ | --- | ---: | --- |
+diff --git a/wine/ps5/vulkan/pw_vk_batch.h b/wine/ps5/vulkan/pw_vk_batch.h
+--- a/wine/ps5/vulkan/pw_vk_batch.h
++++ b/wine/ps5/vulkan/pw_vk_batch.h
+@@ -13,6 +13,9 @@
+ #define PW_VK_BATCH_GENERATED_OPCODE 8u
+ #define PW_VK_BATCH_ARENA (256u*1024u)
+ #define PW_VK_BATCH_SCRATCH (16u*1024u*1024u)
++/* Task247: a v1-only Unix library (1009 tree) rejects batches above its own
++ * 4 MiB scratch bound, so a legacy-negotiated PE splits larger drains. */
++#define PW_VK_BATCH_LEGACY_SCRATCH (4u*1024u*1024u)
+ /* All pointer fields are explicit 32-bit PE addresses. Result/status is owned
+  * by the ordinary thunk; the batch entry reports only its own framing error. */
+ struct pw_vk_batch_params { UINT32 version,batch,bytes,code,args,status; };
+diff --git a/wine/ps5/vulkan/pw_vk_batch_pe.c b/wine/ps5/vulkan/pw_vk_batch_pe.c
+--- a/wine/ps5/vulkan/pw_vk_batch_pe.c
++++ b/wine/ps5/vulkan/pw_vk_batch_pe.c
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+ #include "vulkan_loader.h"
+ #include "pw_vk_batch.h"
++#include "pw_vk_pod246.h"
+ #include "pw_vk_present_pe.h"
+ #include <stdlib.h>
+ #include "pw_vk_retire.h"
+@@ -29,6 +30,13 @@
+ static unsigned char *scratch;
+ static BOOL enabled,stats_enabled;
+ static _Atomic int negotiated,async_backend;
++/* Task247: a Unix library answering only the v1 name still batches the seven
++ * fast opcodes with version-1 framing; generated records stay synchronous. */
++static _Atomic int backend_kind; /* enum pw247_backend */
++/* Generated opcode 8 requires an unset PW_VK_BATCH_MASK. Any explicit mask,
++ * including 0x7f, selects only the seven v1 categories for same-package A/B. */
++static BOOL generated_allowed=TRUE;
++static LONG negotiation_reported,sticky_reported;
+ /* Only the existing gated fallback path owns these arrays. */
+ static BOOL fallback_profile;
+ static UINT64 fallback_counts[unix_count],fallback_reported[unix_count];
+@@ -38,7 +46,7 @@
+ static LONG sticky_disabled;
+ static DWORD owner;
+ static unsigned depth;
+-static UINT64 records_total,dispatches_total,piggyback_total,full_total,fallback_total,enqueued_total;
++static UINT64 records_total,dispatches_total,piggyback_total,full_total,fallback_total,enqueued_total,split_total;
+ static DECLSPEC_ALIGN(8) UINT64 present;
+ static DECLSPEC_ALIGN(8) UINT64 crossings_total;
+ /* Deferred descriptor writes (PW_VK_DEFER_DESCRIPTORS=1). vkGetDescriptorEXT
+@@ -64,21 +72,12 @@
+ static DECLSPEC_NORETURN void fatal(void){ERR("PW_VK_BATCH fatal replay/order failure\n");TerminateProcess(GetCurrentProcess(),3);ExitProcess(3);}
+ static BOOL read_opcode_mask(void)
+ {
+- char value[32];DWORD n=GetEnvironmentVariableA("PW_VK_BATCH_MASK",value,sizeof(value));
+- unsigned base=10,i=0,digit;uint32_t mask=0;
+- if(!n)return TRUE; /* Unset retains all seven existing categories. */
+- if(n>=sizeof(value))return FALSE;
+- if(n>=2&&value[0]=='0'&&(value[1]=='x'||value[1]=='X')){base=16;i=2;}
+- if(i==n)return FALSE;
+- for(;i<n;i++){
+-  if(value[i]>='0'&&value[i]<='9')digit=value[i]-'0';
+-  else if(base==16&&value[i]>='a'&&value[i]<='f')digit=value[i]-'a'+10;
+-  else if(base==16&&value[i]>='A'&&value[i]<='F')digit=value[i]-'A'+10;
+-  else return FALSE;
+-  if(digit>=base||mask>(0x7f-digit)/base)return FALSE;
+-  mask=mask*base+digit;
+- }
+- opcode_mask=mask;return TRUE;
++ char value[PW247_MASK_TEXT];DWORD n=GetEnvironmentVariableA("PW_VK_BATCH_MASK",value,sizeof(value));
++ uint32_t mask=opcode_mask;int generated=generated_allowed;
++ /* Unset retains all seven categories plus generated records; any valid
++  * explicit mask (0x7f included) is the v1-only A/B arm. */
++ if(!pw247_parse_mask(value,n,sizeof(value),&mask,&generated))return FALSE;
++ opcode_mask=mask;generated_allowed=generated;return TRUE;
+ }
+ static BOOL CALLBACK initialize(INIT_ONCE *o,void *p,void **ctx)
+ {
+@@ -152,17 +151,23 @@
+  now=GetTickCount();if(!*start)*start=now;
+  else if(now-*start>=1000){wait_report(stage,list,n,marker);*reported=TRUE;}
+ }
+-static void collect(size_t *bytes,size_t *records)
++/* Returns FALSE only for a legacy backend whose 4 MiB bound filled before the
++ * marker; bytes then hold a complete ordered prefix and the caller dispatches
++ * it flush-only before collecting again from the same sequence. */
++static BOOL collect(size_t *bytes,size_t *records)
+ {
+  struct producer *list[PW_VK_BATCH_SCRATCH/PW_VK_BATCH_ARENA];
+  uint64_t marker=pw_vk_spsc_marker(&stream_sequence);size_t n=producers(list),i;
++ size_t limit=pw247_batch_limit(backend_kind);
+  unsigned spins=0;DWORD start=0;BOOL reported=FALSE;
+  *bytes=*records=0;
+  while(next_replay<=marker){
+   BOOL found=FALSE;
++  if(pw247_should_split(backend_kind,0,*bytes,limit-*bytes,PW_VK_STREAM_HEADER)){enqueued_total=next_replay-1;return FALSE;}
+   for(i=0;i<n;i++){
+-   size_t used;int status=pw_vk_spsc_take(&list[i]->stream,next_replay,scratch+*bytes,PW_VK_BATCH_SCRATCH-*bytes,&used);
++   size_t used;int status=pw_vk_spsc_take(&list[i]->stream,next_replay,scratch+*bytes,limit-*bytes,&used);
+    if(status==PW_VK_STREAM_PENDING)continue;
++   if(pw247_should_split(backend_kind,status==PW_VK_STREAM_FULL,*bytes,limit-*bytes,PW_VK_STREAM_HEADER)){enqueued_total=next_replay-1;return FALSE;}
+    if(status)fatal();
+    *bytes+=used;(*records)++;next_replay++;found=TRUE;break;
+   }
+@@ -170,6 +175,7 @@
+   else {spins=0;start=0;reported=FALSE;}
+  }
+  enqueued_total=marker; /* Snapshot counts exactly the accepted prefix. */
++ return TRUE;
+ }
+ static void quiesce(void)
+ {
+@@ -191,9 +197,14 @@
+ static NTSTATUS flush_call(unsigned int code,void *args)
+ {
+  size_t bytes=0,records=0;struct pw_vk_batch_params p;NTSTATUS status;
+- collect(&bytes,&records);
++ while(!collect(&bytes,&records)){
++  /* Legacy-only split: an ordered prefix, flush-only, no caller status. */
++  p.version=PW_VK_BATCH_LEGACY_VERSION;p.batch=(UINT_PTR)scratch;p.bytes=bytes;p.code=unix_count;p.args=0;p.status=STATUS_SUCCESS;
++  status=raw_call(unix_pw_vk_batch,&p);if(status||p.status)fatal();
++  dispatches_total++;records_total+=records;split_total++;
++ }
+  if(!bytes&&!async_backend){status=code==unix_count?STATUS_SUCCESS:raw_call(code,args);pw_vk_retirement_drain(&retirement,free,heap_free);reclaim();return status;}
+- p.version=async_backend?PW_VK_BATCH_ASYNC_VERSION:PW_VK_BATCH_VERSION;p.batch=(UINT_PTR)scratch;p.bytes=bytes;p.code=code;p.args=(UINT_PTR)args;p.status=STATUS_SUCCESS;
++ p.version=pw247_batch_version(backend_kind);p.batch=(UINT_PTR)scratch;p.bytes=bytes;p.code=code;p.args=(UINT_PTR)args;p.status=STATUS_SUCCESS;
+  status=raw_call(unix_pw_vk_batch,&p);if(status)fatal();
+  pw_vk_present_observe(code,args,p.status);
+  dispatches_total++;records_total+=records;if(code<unix_count)piggyback_total++;
+@@ -393,6 +404,13 @@
+   if(mappings[i].begin<=begin&&begin+q->dataSize<=mappings[i].end)return TRUE;
+  return FALSE;
+ }
++/* Capability probes are ordinary synchronous availability calls on the
++ * just-created instance; an old Unix answers 0/1 for unknown names. */
++static uint32_t ask_capability(void *instance,const char *name)
++{
++ struct is_available_instance_function_params cap={(VkInstance)instance,name};
++ return (uint32_t)raw_call(unix_is_available_instance_function,&cap);
++}
+ NTSTATUS pw_vk_batch_call(unsigned int code,void *args)
+ {
+  unsigned char *wire;size_t bytes;uint32_t opcode;struct producer *p;NTSTATUS status;int appended;BOOL deferred;
+@@ -416,7 +434,7 @@
+   InterlockedExchange(&p->publishing,1);
+   if(!InterlockedCompareExchange(&quiescing,0,0)){
+    wire=p->wire;bytes=0;opcode=0;
+-   if(!encode(code,args,wire,&bytes,&opcode)&&opcode_mask==0x7f&&
++   if(!encode(code,args,wire,&bytes,&opcode)&&pw247_generated_enabled(opcode_mask,generated_allowed,backend_kind)&&
+       pw_vk_generated_encode_templates(code,args,wire+4,PW_VK_BATCH_ARENA-PW_VK_STREAM_HEADER-4,&bytes,template_snapshot,template_device(code,args))){
+     memcpy(wire,&code,4);bytes+=4;opcode=PW_VK_BATCH_GENERATED_OPCODE;
+    }
+@@ -443,7 +461,10 @@
+  if(InterlockedCompareExchange(&sticky_disabled,0,0)){leave();status=raw_call(code,args);snapshot(code,args);return status;}
+  if(pw_vk_stream_call_unsafe(code,args)||pw_vk_batch_allocator(code,args)){
+   quiesce();if(negotiated)flush_call(unix_count,NULL);
+-  InterlockedExchange(&sticky_disabled,1);leave();status=raw_call(code,args);snapshot(code,args);return status;
++  InterlockedExchange(&sticky_disabled,1);
++  if(!InterlockedExchange(&sticky_reported,1))
++   WINE_MESSAGE("PW_VK_BATCH_STICKY version=1 tid=%lu code=%u function=%s records=%llu batch_dispatches=%llu legacy_splits=%llu\n",GetCurrentThreadId(),code,code<unix_count?pw_vk_function_names[code]:"?",records_total,dispatches_total,split_total);
++  leave();status=raw_call(code,args);snapshot(code,args);return status;
+  }
+  fallback_total++;
+  if(fallback_profile&&code<unix_count)fallback_counts[code]++;
+@@ -465,10 +486,11 @@
+  if(code==unix_vkCreateInstance&&!status){
+   struct vkCreateInstance_params *q=args;
+   if(q->result==VK_SUCCESS&&q->pInstance&&*q->pInstance){
+-   struct is_available_instance_function_params cap={*q->pInstance,PW_VK_BATCH_ASYNC_NAME};
+-   async_backend=raw_call(unix_is_available_instance_function,&cap)==PW_VK_BATCH_ASYNC_CAPABILITY;
+-   if(async_backend)negotiated=TRUE;
+-   else{cap.name=PW_VK_BATCH_NAME;negotiated=raw_call(unix_is_available_instance_function,&cap)==PW_VK_BATCH_CAPABILITY;}
++   int kind=pw247_negotiate(ask_capability,*q->pInstance);
++   backend_kind=kind;async_backend=kind==PW247_ASYNC;negotiated=kind!=PW247_NONE;
++   /* One line per process (first instance), never per frame. */
++   if(!InterlockedExchange(&negotiation_reported,1))
++    WINE_MESSAGE("PW_VK_BATCH_NEGOTIATED version=1 backend=%s batch_version=%u mask=0x%x generated=%u legacy_limit=%u\n",pw247_backend_name(kind),(unsigned)pw247_batch_version(kind),(unsigned)opcode_mask,(unsigned)pw247_generated_enabled(opcode_mask,generated_allowed,kind),(unsigned)(kind==PW247_LEGACY?PW_VK_BATCH_LEGACY_SCRATCH:0));
+   }
+  }
+  snapshot(code,args);
+diff --git a/wine/ps5/vulkan/pw_vk_pod246.h b/wine/ps5/vulkan/pw_vk_pod246.h
+new file mode 100644
+--- /dev/null
++++ b/wine/ps5/vulkan/pw_vk_pod246.h
+@@ -0,0 +1,100 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later
++ *
++ * Task247 batch policy helpers, shared verbatim by pw_vk_batch_pe.c and the
++ * host test fixture native247_fixture.cpp (not published).
++ * Pure C/C++: no Wine/Vulkan types, allocation, locks, TLS or crossings.
++ * Include after pw_vk_batch.h.
++ *
++ * The task246 POD/viewport/scissor/blend opcodes (8-11) are withdrawn: this
++ * tree already assigns opcode 8 to PW_VK_BATCH_GENERATED_OPCODE, whose
++ * generated fieldwise codec deep-copies every supported void input thunk,
++ * a superset of the task246 46-name POD list plus viewport/scissor/blend.
++ * What task247 adds on top of the current tree:
++ *   - negotiation order async -> v2 -> v1 legacy, so a mixed new PE/old Unix
++ *     pair keeps the seven v1 fast opcodes instead of disabling batching;
++ *   - a legacy drain bound matching the v1 Unix 4 MiB scratch check;
++ *   - generated opcode 8 only with an unset mask: explicit PW_VK_BATCH_MASK
++ *     (including 0x7f) reproduces v1 for same-package A/B.
++ */
++#ifndef PW_VK_POD246_H
++#define PW_VK_POD246_H
++#include <stddef.h>
++#include <stdint.h>
++#ifndef PW_VK_BATCH_H
++#error "include pw_vk_batch.h first"
++#endif
++
++#define PW247_MASK_V1 0x7fu
++#define PW247_MASK_TEXT 32u
++
++enum pw247_backend { PW247_NONE = 0, PW247_LEGACY = 1, PW247_V2 = 2, PW247_ASYNC = 3 };
++
++typedef uint32_t (*pw247_ask_fn)(void *ctx, const char *name);
++/* Queries stop at the first exact capability. Any other answer (0, 1 from an
++ * ordinary is_available lookup, or a different capability) moves on. */
++static inline int pw247_negotiate(pw247_ask_fn ask, void *ctx)
++{
++    if (!ask) return PW247_NONE;
++    if (ask(ctx, PW_VK_BATCH_ASYNC_NAME) == PW_VK_BATCH_ASYNC_CAPABILITY) return PW247_ASYNC;
++    if (ask(ctx, PW_VK_BATCH_NAME) == PW_VK_BATCH_CAPABILITY) return PW247_V2;
++    if (ask(ctx, PW_VK_BATCH_LEGACY_NAME) == PW_VK_BATCH_LEGACY_CAPABILITY) return PW247_LEGACY;
++    return PW247_NONE;
++}
++static inline const char *pw247_backend_name(int backend)
++{
++    return backend == PW247_ASYNC ? "async" : backend == PW247_V2 ? "v2" : backend == PW247_LEGACY ? "v1" : "none";
++}
++static inline uint32_t pw247_batch_version(int backend)
++{
++    return backend == PW247_ASYNC ? PW_VK_BATCH_ASYNC_VERSION :
++           backend == PW247_LEGACY ? PW_VK_BATCH_LEGACY_VERSION : PW_VK_BATCH_VERSION;
++}
++static inline size_t pw247_batch_limit(int backend)
++{
++    return backend == PW247_LEGACY ? (size_t)PW_VK_BATCH_LEGACY_SCRATCH : (size_t)PW_VK_BATCH_SCRATCH;
++}
++
++/* GetEnvironmentVariableA semantics: n is 0 when unset and >= the buffer size
++ * when it does not fit. Unset keeps 0x7f and generated records. A valid
++ * explicit decimal/0x-hex value 0..127 sets the mask and turns generated
++ * records off. Invalid text returns 0 (caller fails closed) and changes
++ * nothing. */
++static inline int pw247_parse_mask(const char *value, size_t n, size_t cap,
++                                   uint32_t *mask, int *generated)
++{
++    unsigned base = 10, digit;
++    size_t i = 0;
++    uint32_t parsed = 0;
++    if (!n) return 1;
++    if (!value || n >= cap) return 0;
++    if (n >= 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) { base = 16; i = 2; }
++    if (i == n) return 0;
++    for (; i < n; i++)
++    {
++        if (value[i] >= '0' && value[i] <= '9') digit = (unsigned)(value[i] - '0');
++        else if (base == 16 && value[i] >= 'a' && value[i] <= 'f') digit = (unsigned)(value[i] - 'a' + 10);
++        else if (base == 16 && value[i] >= 'A' && value[i] <= 'F') digit = (unsigned)(value[i] - 'A' + 10);
++        else return 0;
++        if (digit >= base || parsed > (PW247_MASK_V1 - digit) / base) return 0;
++        parsed = parsed * base + digit;
++    }
++    *mask = parsed;
++    *generated = 0;
++    return 1;
++}
++/* Generated opcode 8 needs the v2 (or async) Unix decoder, the full v1 mask
++ * and no explicit mask. */
++static inline int pw247_generated_enabled(uint32_t mask, int generated_allowed, int backend)
++{
++    return mask == PW247_MASK_V1 && generated_allowed && backend != PW247_LEGACY && backend != PW247_NONE;
++}
++/* Drain split rule. A take that does not fit is fatal except for a legacy
++ * backend that already holds an ordered prefix: dispatch that prefix as a
++ * flush-only batch, then continue at the same sequence. room < header is
++ * treated as not fitting so the take never sees a zero-sized scratch. */
++static inline int pw247_should_split(int backend, int take_full, size_t collected, size_t room, size_t header)
++{
++    if (backend != PW247_LEGACY || !collected) return 0;
++    return take_full || room < header;
++}
++#endif

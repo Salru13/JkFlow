@@ -1,0 +1,590 @@
+JkFlow 1.00 Wine PS4 runtime: ntdll: in-process server fast paths and the bounded event-wait spin (spin260 / override260)
+
+
+ dlls/ntdll/unix/server.c
+ dlls/ntdll/unix/sync.c
+ dlls/ntdll/unix/pw258_sync_spin.inc
+---
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -549,8 +549,80 @@
+     return value;
+ }
+ 
++/* native265 shared diagnostic begin */
++enum { N265_HIT, N265_NOAPI, N265_NOTREADY, N265_CONTEXT, N265_NEGATIVE,
++       N265_LOOKUP, N265_ACCESS, N265_WORD, N265_REASONS };
++struct n265_shared_stats
++{
++    uintptr_t owner;
++    unsigned tid, busy, total, counts[4][N265_REASONS];
++    unsigned long long cumulative;
++};
++static struct n265_shared_stats n265_slots[128];
++static unsigned n265_omitted;
++static int n265_enabled = -1;
++static int n265_gate(void)
++{
++    int enabled = __atomic_load_n(&n265_enabled, __ATOMIC_ACQUIRE);
++    if (enabled < 0)
++    {
++        const char *value = getenv("PW_SYNC_PROFILE");
++        int chosen = value && !strcmp(value, "1"), expected = -1;
++        __atomic_compare_exchange_n(&n265_enabled, &expected, chosen, 0,
++                                   __ATOMIC_RELEASE, __ATOMIC_RELAXED);
++        enabled = __atomic_load_n(&n265_enabled, __ATOMIC_ACQUIRE);
++    }
++    return enabled;
++}
++static struct n265_shared_stats *n265_slot(void)
++{
++    uintptr_t owner = (uintptr_t)NtCurrentTeb();
++    unsigned tid = get_thread_data()->tid, i;
++    if (owner <= 1 || !tid) return NULL;
++    for (i = 0; i < 128; ++i)
++    {
++        uintptr_t value = __atomic_load_n(&n265_slots[i].owner, __ATOMIC_ACQUIRE);
++        if (value == owner && n265_slots[i].tid == tid) return &n265_slots[i];
++        if (value == 1) break;
++        if (!value)
++        {
++            uintptr_t expected = 0;
++            if (!__atomic_compare_exchange_n(&n265_slots[i].owner, &expected, 1, 0,
++                                            __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) break;
++            n265_slots[i].tid = tid;
++            __atomic_store_n(&n265_slots[i].owner, owner, __ATOMIC_RELEASE);
++            return &n265_slots[i];
++        }
++    }
++    __atomic_add_fetch(&n265_omitted, 1, __ATOMIC_RELAXED);
++    return NULL;
++}
++static void n265_record(struct n265_shared_stats *stat, unsigned operation, unsigned why)
++{
++    unsigned i;
++    ++stat->counts[operation][why];
++    ++stat->cumulative;
++    if (++stat->total == 4096)
++    {
++        for (i = 0; i < 4; ++i)
++        {
++            unsigned *c = stat->counts[i], attempts = 0, j;
++            for (j = 0; j < N265_REASONS; ++j) attempts += c[j];
++            if (!attempts) continue;
++            ERR("PW_SYNC265 tid=%04x cumulative=%llu window=4096 op=%u attempts=%u hit=%u noapi=%u notready=%u context=%u negative=%u lookup=%u access=%u word=%u omitted=%u\n",
++                stat->tid, stat->cumulative, i, attempts, c[N265_HIT], c[N265_NOAPI],
++                c[N265_NOTREADY], c[N265_CONTEXT], c[N265_NEGATIVE], c[N265_LOOKUP],
++                c[N265_ACCESS], c[N265_WORD], __atomic_load_n(&n265_omitted, __ATOMIC_RELAXED));
++        }
++        stat->total = 0;
++        memset(stat->counts, 0, sizeof(stat->counts));
++    }
++    __atomic_store_n(&stat->busy, 0, __ATOMIC_RELEASE);
++}
++/* native265 shared diagnostic end */
++
+ static unsigned int server_try_shared_sync_inprocess(HANDLE handle, unsigned int operation, unsigned int count,
+-                                    const LARGE_INTEGER *timeout, unsigned int *previous)
++                                    const LARGE_INTEGER *timeout, unsigned int *previous, unsigned int *why)
+ {
+     struct thread_data *data = get_thread_data();
+     obj_handle_t h = wine_server_obj_handle(handle);
+@@ -558,35 +630,43 @@
+     struct pw_sync_word *word;
+     uint32_t old;
+     sigset_t sigset;
+-    if (!data->tid || operation > PW_SYNC_RELEASE ||
+-        !pw_sync_backend_ready(shared_sync_backend)) return STATUS_NOT_IMPLEMENTED;
++    if (why) *why = N265_HIT;
++    if (!data->tid || operation > PW_SYNC_RELEASE)
++    { if (why) *why = N265_CONTEXT; return STATUS_NOT_IMPLEMENTED; }
++    if (!shared_sync_backend)
++    { if (why) *why = N265_NOAPI; return STATUS_NOT_IMPLEMENTED; }
++    if (!pw_sync_backend_ready(shared_sync_backend))
++    { if (why) *why = N265_NOTREADY; return STATUS_NOT_IMPLEMENTED; }
+     slot = shared_sync_slot(h, 0);
+     value = slot ? __atomic_load_n(slot, __ATOMIC_ACQUIRE) : 0;
+-    if (value == PW_SYNC_SLOT_NEGATIVE) return STATUS_NOT_IMPLEMENTED;
++    if (value == PW_SYNC_SLOT_NEGATIVE) { if (why) *why = N265_NEGATIVE; return STATUS_NOT_IMPLEMENTED; }
+     if (!value)
+     {
+         server_enter_uninterrupted_section(&fd_cache_mutex, &sigset);
+         value = shared_sync_fill(data, h);
+         server_leave_uninterrupted_section(&fd_cache_mutex, &sigset);
+     }
+-    if (!value || value == PW_SYNC_SLOT_NEGATIVE ||
+-        !pw_sync_backend_ready(shared_sync_backend)) return STATUS_NOT_IMPLEMENTED;
++    if (!value || value == PW_SYNC_SLOT_NEGATIVE || !pw_sync_backend_ready(shared_sync_backend))
++    {
++        if (why) *why = !value ? N265_LOOKUP : value == PW_SYNC_SLOT_NEGATIVE ? N265_NEGATIVE : N265_NOTREADY;
++        return STATUS_NOT_IMPLEMENTED;
++    }
+     word = pw_sync_slot_word(value);
+     if (operation == PW_SYNC_WAIT)
+     {
+-        if (!(value & PW_SYNC_SLOT_SYNCHRONIZE)) return STATUS_NOT_IMPLEMENTED;
++        if (!(value & PW_SYNC_SLOT_SYNCHRONIZE)) { if (why) *why = N265_ACCESS; return STATUS_NOT_IMPLEMENTED; }
+         if (timeout) { volatile timeout_t when = timeout->QuadPart; (void)when; }
+-        if (!pw_sync_word_try_wait(word)) return STATUS_NOT_IMPLEMENTED;
++        if (!pw_sync_word_try_wait(word)) { if (why) *why = N265_WORD; return STATUS_NOT_IMPLEMENTED; }
+     }
+     else
+     {
+-        if (!(value & PW_SYNC_SLOT_MODIFY)) return STATUS_NOT_IMPLEMENTED;
++        if (!(value & PW_SYNC_SLOT_MODIFY)) { if (why) *why = N265_ACCESS; return STATUS_NOT_IMPLEMENTED; }
+         if (operation == PW_SYNC_RELEASE)
+         {
+-            if (!pw_sync_word_try_release(word, count, &old)) return STATUS_NOT_IMPLEMENTED;
++            if (!pw_sync_word_try_release(word, count, &old)) { if (why) *why = N265_WORD; return STATUS_NOT_IMPLEMENTED; }
+         }
+         else if (!pw_sync_word_try_event(word, operation == PW_SYNC_SET, &old))
+-            return STATUS_NOT_IMPLEMENTED;
++            { if (why) *why = N265_WORD; return STATUS_NOT_IMPLEMENTED; }
+         if (previous) *previous = old;
+     }
+     return STATUS_SUCCESS;
+@@ -598,13 +678,28 @@
+     uintptr_t *slot = shared_sync_slot(wine_server_obj_handle(handle), 0);
+     if (slot) __atomic_store_n(slot, 0, __ATOMIC_RELEASE);
+ }
++#include "pw258_sync_spin.inc"
+ #endif
+ 
++int server_spin_shared_wait(HANDLE handle, const LARGE_INTEGER *timeout)
++{
++#ifdef WINE_INPROCESS_SERVER
++    return pw258_spin_shared_wait(handle, timeout);
++#else
++    return 0;
++#endif
++}
++
+ unsigned int server_try_shared_sync(HANDLE handle, unsigned int operation, unsigned int count,
+                                     const LARGE_INTEGER *timeout, unsigned int *previous)
+ {
+ #ifdef WINE_INPROCESS_SERVER
+-    return server_try_shared_sync_inprocess(handle, operation, count, timeout, previous);
++    unsigned int result, why = N265_HIT;
++    struct n265_shared_stats *stat = n265_gate() && operation < 4 ? n265_slot() : NULL;
++    int profile = stat && !__atomic_exchange_n(&stat->busy, 1, __ATOMIC_ACQUIRE);
++    result = server_try_shared_sync_inprocess(handle, operation, count, timeout, previous, profile ? &why : NULL);
++    if (profile) n265_record(stat, operation, why);
++    return result;
+ #else
+     return STATUS_NOT_IMPLEMENTED;
+ #endif
+@@ -1941,7 +2036,7 @@
+     char *dir = NULL, *module_path, *nls_dir, *p;
+     void *module;
+     int (*connect_server)( const char *, char **, const char * );
+-    int fd;
++    int fd, sync_requested = -1, sync_query_present = 0, sync_api_valid = 0;
+ 
+     if (dladdr( connect_inprocess_server, &info ) && info.dli_fname) dir = strdup( info.dli_fname );
+     if (dir && (p = strrchr( dir, '/' ))) *p = 0;
+@@ -1988,14 +2083,19 @@
+         if (query && pw_mutex_backend_valid( api = query( PW_MUTEX_BACKEND_VERSION )))
+             shared_mutex_backend = api;
+     }
+-    if (call_server_direct && server_shared_sync_enabled())
++    if (call_server_direct && (sync_requested = server_shared_sync_enabled()))
+     {
+         const struct pw_sync_backend *(*query)(uint32_t);
+         const struct pw_sync_backend *api;
+         query = dlsym(module, "pw_wineserver_sync_backend");
+-        if (query && pw_sync_backend_valid(api = query(PW_SYNC_BACKEND_VERSION)))
++        sync_query_present = !!query;
++        if (query && (sync_api_valid = pw_sync_backend_valid(api = query(PW_SYNC_BACKEND_VERSION))))
+             shared_sync_backend = api;
+     }
++    if (n265_gate())
++        ERR("PW_SYNC265_SELECT direct=%u requested=%d query=%d abi=%d selected=%u ready=%u\n",
++            !!call_server_direct, sync_requested, sync_query_present, sync_api_valid,
++            !!shared_sync_backend, !!pw_sync_backend_ready(shared_sync_backend));
+     fprintf(stderr, "wine-ps5: shared event/semaphore backend: %s\n", shared_sync_backend ? "on" : "off");
+     fprintf( stderr, "wine-ps5: shared mutex backend: %s\n", shared_mutex_backend ? "on" : "off" );
+     fprintf( stderr, "wine-ps5: server requests on client threads: %s\n", call_server_direct ? "on" : "off" );
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -1155,21 +1155,110 @@
+ /******************************************************************************
+  *              NtSetEvent (NTDLL.@)
+  */
++/* native263 event profiler begin */
++struct n263_event_stats { uintptr_t owner; unsigned tid, busy, total, attempts[3], fallback[3], failures[3]; unsigned long long first, cumulative, ticks[3]; };
++static struct n263_event_stats n263_slots[128];
++static unsigned n263_overflow;
++static int n263_enabled = -1;
++static int n263_gate(void)
++{
++    int v = __atomic_load_n(&n263_enabled, __ATOMIC_ACQUIRE);
++    if (v < 0)
++    {
++        const char *p = getenv("PW_EVENT_PROFILE");
++        int new_value = p && !strcmp(p, "1");
++        int expected = -1;
++        __atomic_compare_exchange_n(&n263_enabled, &expected, new_value, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
++        v = __atomic_load_n(&n263_enabled, __ATOMIC_ACQUIRE);
++    }
++    return v;
++}
++static unsigned long long n263_clock(void)
++{
++    unsigned lo, hi;
++    __asm__ volatile("lfence; rdtsc" : "=a"(lo), "=d"(hi) :: "memory");
++    return ((unsigned long long)hi << 32) | lo;
++}
++static struct n263_event_stats *n263_slot(void)
++{
++    uintptr_t owner = (uintptr_t)NtCurrentTeb();
++    unsigned tid = get_thread_data()->tid, i;
++    if (owner <= 1 || !tid) return NULL;
++    for (i = 0; i < 128; i++)
++    {
++        uintptr_t value = __atomic_load_n(&n263_slots[i].owner, __ATOMIC_ACQUIRE);
++        if (value == owner && n263_slots[i].tid == tid) return &n263_slots[i];
++        if (value == 1) { __atomic_add_fetch(&n263_overflow, 1, __ATOMIC_RELAXED); return NULL; }
++        if (!value)
++        {
++            uintptr_t zero = 0;
++            if (__atomic_compare_exchange_n(&n263_slots[i].owner, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
++            {
++                n263_slots[i].tid = tid;
++                __atomic_store_n(&n263_slots[i].owner, owner, __ATOMIC_RELEASE);
++                return &n263_slots[i];
++            }
++            __atomic_add_fetch(&n263_overflow, 1, __ATOMIC_RELAXED);
++            return NULL;
++        }
++    }
++    __atomic_add_fetch(&n263_overflow, 1, __ATOMIC_RELAXED);
++    return NULL;
++}
++static void n263_record(struct n263_event_stats *s, unsigned path, unsigned ret, unsigned long long start)
++{
++    unsigned long long end = n263_clock();
++    s->attempts[path]++;
++    if (ret == STATUS_NOT_IMPLEMENTED && path != 2) s->fallback[path]++;
++    else if (ret) s->failures[path]++;
++    if (end >= start) s->ticks[path] += end - start;
++}
++static void n263_finish(struct n263_event_stats *s)
++{
++    ++s->cumulative;
++    if (++s->total == 4096)
++    {
++        unsigned long long end = n263_clock();
++        ERR("PW_EVENT263 tid=%04x start=%llu end=%llu calls=%u cumulative=%llu overflow=%u inproc=%u/%u/%u/%llu shared=%u/%u/%u/%llu server=%u/%u/%u/%llu\n",
++            s->tid, s->first, end, s->total, s->cumulative, __atomic_load_n(&n263_overflow, __ATOMIC_RELAXED),
++            s->attempts[0], s->fallback[0], s->failures[0], s->ticks[0],
++            s->attempts[1], s->fallback[1], s->failures[1], s->ticks[1],
++            s->attempts[2], s->fallback[2], s->failures[2], s->ticks[2]);
++        s->total = 0;
++        memset(s->attempts, 0, sizeof(s->attempts));
++        memset(s->fallback, 0, sizeof(s->fallback));
++        memset(s->failures, 0, sizeof(s->failures));
++        memset(s->ticks, 0, sizeof(s->ticks));
++    }
++    __atomic_store_n(&s->busy, 0, __ATOMIC_RELEASE);
++}
++/* native263 event profiler end */
++
+ NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
+ {
+     unsigned int ret, old;
++    struct n263_event_stats *stat = n263_gate() ? n263_slot() : NULL;
++    int profile = stat && !__atomic_exchange_n(&stat->busy, 1, __ATOMIC_ACQUIRE);
++    unsigned long long stamp = 0;
++    if (profile) { stamp = n263_clock(); if (!stat->total) stat->first = stamp; }
+ 
+     TRACE( "handle %p, prev_state %p\n", handle, prev_state );
+ 
+-    if ((ret = inproc_set_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
+-        return ret;
+-
+-    if ((ret = server_try_shared_sync(handle, PW_SYNC_SET, 0, NULL, &old)) != STATUS_NOT_IMPLEMENTED)
++    ret = inproc_set_event( handle, prev_state );
++    if (profile) n263_record(stat, 0, ret, stamp);
++    if (ret != STATUS_NOT_IMPLEMENTED) { if (profile) n263_finish(stat); return ret; }
++    if (profile) stamp = n263_clock();
++
++    ret = server_try_shared_sync(handle, PW_SYNC_SET, 0, NULL, &old);
++    if (profile) n263_record(stat, 1, ret, stamp);
++    if (ret != STATUS_NOT_IMPLEMENTED)
+     {
+         if (!ret && prev_state) *prev_state = (LONG)old;
++        if (profile) n263_finish(stat);
+         return ret;
+     }
+ 
++    if (profile) stamp = n263_clock();
+     SERVER_START_REQ( event_op )
+     {
+         req->handle = wine_server_obj_handle( handle );
+@@ -1178,6 +1267,7 @@
+         if (!ret && prev_state) *prev_state = reply->state;
+     }
+     SERVER_END_REQ;
++    if (profile) { n263_record(stat, 2, ret, stamp); n263_finish(stat); }
+     return ret;
+ }
+ 
+@@ -2382,6 +2472,12 @@
+     if (!alertable && (ret = server_try_shared_sync(handle, PW_SYNC_WAIT, 0, timeout, NULL)) != STATUS_NOT_IMPLEMENTED)
+         return ret;
+ 
++    {
++        extern int server_spin_shared_wait(HANDLE handle, const LARGE_INTEGER *timeout);
++        if (!alertable && server_spin_shared_wait( handle, timeout ))
++            return STATUS_SUCCESS;
++    }
++
+     if (!alertable && (ret = server_try_fast_mutex( handle, 0, timeout, NULL )) != STATUS_NOT_IMPLEMENTED)
+         return ret;
+ 
+@@ -3470,8 +3566,46 @@
+ }
+ 
+ 
++/* Native263 experimental alert backend. OFF until a native qualification
++ * receipt establishes op11/op3, relative timeout and POSIX error ABI. An env
++ * setting alone cannot authorize it. Backend selection is process-lifetime:
++ * never reinterpret a published kqueue fd as a pending-alert word or vice versa. */
++#ifndef PW_ORBIS_ALERT_UMTX_QUALIFIED
++#define PW_ORBIS_ALERT_UMTX_QUALIFIED 0
++#endif
++#if defined(__PROSPERO__) && defined(HAVE_KQUEUE) && !defined(USE_FUTEX) && PW_ORBIS_ALERT_UMTX_QUALIFIED
++#define PW_ORBIS_ALERT_UMTX 1
++#include "pw_orbis_alert_umtx.h"
++static uintptr_t orbis_alert_choice; /* 0 undecided, 1 kqueue, otherwise pinned ABI pointer. */
++static int orbis_alert_uses_umtx(void)
++{
++    uintptr_t choice = __atomic_load_n(&orbis_alert_choice, __ATOMIC_ACQUIRE);
++    if (!choice)
++    {
++        const char *value = getenv("PW_NATIVE_ALERT_UMTX");
++        const struct n263_qualified_abi *abi = value && !strcmp(value, "1") ? n263_get_qualified_abi() : NULL;
++        uintptr_t chosen = pw_alert_abi_valid(abi) ? (uintptr_t)abi : 1;
++        uintptr_t expected = 0;
++        __atomic_compare_exchange_n(&orbis_alert_choice, &expected, chosen, 0,
++                                   __ATOMIC_RELEASE, __ATOMIC_ACQUIRE);
++        choice = __atomic_load_n(&orbis_alert_choice, __ATOMIC_ACQUIRE);
++    }
++    return choice != 1;
++}
++static const struct n263_qualified_abi *orbis_alert_selected_abi(void)
++{
++    uintptr_t choice = __atomic_load_n(&orbis_alert_choice, __ATOMIC_ACQUIRE);
++    return choice > 1 ? (const struct n263_qualified_abi *)choice : NULL;
++}
++static NTSTATUS orbis_signal_alert(LONG *word);
++static NTSTATUS orbis_wait_for_alert(LONG *word, const LARGE_INTEGER *timeout);
++#endif
++
+ union tid_alert_entry
+ {
++#ifdef PW_ORBIS_ALERT_UMTX
++    LONG orbis_word;
++#endif
+ #ifdef USE_FUTEX
+     LONG futex;
+ #elif defined(HAVE_KQUEUE)
+@@ -3520,6 +3654,9 @@
+     }
+ 
+     entry = &tid_alert_blocks[block_idx][idx % TID_ALERT_BLOCK_SIZE];
++#ifdef PW_ORBIS_ALERT_UMTX
++    if (orbis_alert_uses_umtx()) return entry;
++#endif
+ 
+ #ifdef USE_FUTEX
+     return entry;
+@@ -3611,6 +3748,9 @@
+     TRACE( "%p\n", tid );
+ 
+     if (!entry) return STATUS_INVALID_CID;
++#ifdef PW_ORBIS_ALERT_UMTX
++    if (orbis_alert_uses_umtx()) return orbis_signal_alert( &entry->orbis_word );
++#endif
+ 
+ #ifdef USE_FUTEX
+     {
+@@ -3664,6 +3804,43 @@
+ #endif
+ 
+ 
++#ifdef PW_ORBIS_ALERT_UMTX
++/* The existing Wine futex bit/coalescing algorithm, with explicit errors. */
++static NTSTATUS orbis_signal_alert( LONG *word )
++{
++    if (!InterlockedExchange( word, 1 ) && pw_alert_umtx_wake( orbis_alert_selected_abi(), (uint32_t *)word ))
++        return STATUS_UNSUCCESSFUL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS orbis_wait_for_alert( LONG *word, const LARGE_INTEGER *timeout )
++{
++    ULONGLONG end = 0;
++    int error;
++    if (timeout)
++    {
++        if (timeout->QuadPart == TIMEOUT_INFINITE) timeout = NULL;
++        else end = get_absolute_timeout( timeout );
++    }
++    while (!InterlockedExchange( word, 0 ))
++    {
++        if (timeout)
++        {
++            LONGLONG timeleft = update_timeout( end );
++            struct timespec relative;
++            relative.tv_sec = timeleft / (ULONGLONG)TICKSPERSEC;
++            relative.tv_nsec = (timeleft % TICKSPERSEC) * 100;
++            error = pw_alert_umtx_wait( orbis_alert_selected_abi(), (uint32_t *)word, &relative );
++        }
++        else error = pw_alert_umtx_wait( orbis_alert_selected_abi(), (uint32_t *)word, NULL );
++        if (error == ETIMEDOUT) return STATUS_TIMEOUT;
++        if (error && error != EINTR && error != EAGAIN)
++            return STATUS_UNSUCCESSFUL;
++    }
++    return STATUS_ALERTED;
++}
++#endif
++
+ /***********************************************************************
+  *             NtWaitForAlertByThreadId (NTDLL.@)
+  */
+@@ -3674,6 +3851,9 @@
+     TRACE( "%p %s\n", address, debugstr_timeout( timeout ) );
+ 
+     if (!entry) return STATUS_INVALID_CID;
++#ifdef PW_ORBIS_ALERT_UMTX
++    if (orbis_alert_uses_umtx()) return orbis_wait_for_alert( &entry->orbis_word, timeout );
++#endif
+ 
+ #ifdef USE_FUTEX
+     {
+diff --git a/dlls/ntdll/unix/pw258_sync_spin.inc b/dlls/ntdll/unix/pw258_sync_spin.inc
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/pw258_sync_spin.inc
+@@ -0,0 +1,118 @@
++/* Task258: bounded user-space spin before an event wait enters the server.
++ *
++ * Install as dlls/ntdll/unix/pw258_sync_spin.inc next to server.c and apply
++ * task258_sync_spin.patch. Compiled inside server.c's WINE_INPROCESS_SERVER
++ * block, so it can use that file's static slot and backend helpers.
++ *
++ * Why: in the native266 race the main thread makes about 700 NtSetEvent calls
++ * per frame and about half take the ordinary server path. The reason counter
++ * for those is `word` (SLOW): a worker is already queued in the server, so the
++ * cell is frozen and the setter must wake it through the server. If the worker
++ * stays in user space for a short time first, the cell stays FAST and the
++ * setter's existing single CAS succeeds.
++ *
++ * Off unless PW_SYNC_SPIN_US is a plain decimal in 1..200. Anything else,
++ * including an out-of-range value, leaves it off.
++ *
++ * Spins only on an already-cached event for an untimed or long-timeout,
++ * non-alertable wait. Leaves as soon as the cell turns SLOW, so a server-queued
++ * waiter, disable or retirement (retired cells stay SLOW and are never freed)
++ * all end the spin. A success is the same CAS the existing fast wait performs.
++ */
++
++#define PW258_SPIN_MAX_US 200u
++/* Nominal Orbis TSC (the race logs report tsc_hz=1593993921). Only a bound, so
++ * it does not need to be exact. */
++#define PW258_TSC_PER_US 1594u
++/* 1 ms in NT 100 ns units. Shorter timeouts must not be stretched by a spin. */
++#define PW258_MIN_RELATIVE_TIMEOUT 10000
++#define PW258_REPORT_MASK 0xffffu
++
++static int64_t pw258_spin_ticks_cached = -1;
++static uint64_t pw258_stat_spins, pw258_stat_hits, pw258_stat_slow, pw258_stat_expired;
++
++static inline uint64_t pw258_rdtsc(void)
++{
++    uint32_t lo, hi;
++    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
++    return ((uint64_t)hi << 32) | lo;
++}
++
++static int64_t pw258_parse_ticks(const char *text)
++{
++    unsigned long us = 0;
++    const char *p;
++    if (!text || !*text) return 0;
++    for (p = text; *p; p++)
++    {
++        if (*p < '0' || *p > '9') return 0;
++        us = us * 10 + (unsigned long)(*p - '0');
++        if (us > PW258_SPIN_MAX_US) return 0;
++    }
++    return (int64_t)us * PW258_TSC_PER_US;
++}
++
++static uint64_t pw258_spin_budget(void)
++{
++    int64_t ticks = __atomic_load_n(&pw258_spin_ticks_cached, __ATOMIC_RELAXED);
++    if (ticks < 0)
++    {
++        { const char *pw260_value = getenv("PW_SYNC_SPIN_US"); ticks = pw260_value ? pw258_parse_ticks(pw260_value) : (int64_t)50 * PW258_TSC_PER_US; }
++        __atomic_store_n(&pw258_spin_ticks_cached, ticks, __ATOMIC_RELAXED);
++    }
++    return (uint64_t)ticks;
++}
++
++static void pw258_spin_finished(uint64_t *outcome)
++{
++    uint64_t spins;
++    __atomic_add_fetch(outcome, 1, __ATOMIC_RELAXED);
++    spins = __atomic_add_fetch(&pw258_stat_spins, 1, __ATOMIC_RELAXED);
++    if (!(spins & PW258_REPORT_MASK))
++        ERR("PW_SYNC258 spins=%llu hit=%llu slow=%llu expired=%llu\n", (unsigned long long)spins,
++            (unsigned long long)__atomic_load_n(&pw258_stat_hits, __ATOMIC_RELAXED),
++            (unsigned long long)__atomic_load_n(&pw258_stat_slow, __ATOMIC_RELAXED),
++            (unsigned long long)__atomic_load_n(&pw258_stat_expired, __ATOMIC_RELAXED));
++}
++
++/* Returns 1 when the wait was satisfied, 0 when the caller must carry on down
++ * the existing path. The caller has already made one fast attempt. */
++static int pw258_spin_shared_wait(HANDLE handle, const LARGE_INTEGER *timeout)
++{
++    uint64_t budget = pw258_spin_budget(), start, old;
++    uintptr_t *slot, value;
++    struct pw_sync_word *word;
++
++    if (!budget) return 0;
++    if (timeout && (timeout->QuadPart >= 0 || timeout->QuadPart > -PW258_MIN_RELATIVE_TIMEOUT)) return 0;
++    if (!get_thread_data()->tid || !pw_sync_backend_ready(shared_sync_backend)) return 0;
++
++    slot = shared_sync_slot(wine_server_obj_handle(handle), 0);
++    value = slot ? __atomic_load_n(slot, __ATOMIC_ACQUIRE) : 0;
++    if (!value || value == PW_SYNC_SLOT_NEGATIVE || !(value & PW_SYNC_SLOT_SYNCHRONIZE)) return 0;
++    word = pw_sync_slot_word(value);
++    if (word->kind != PW_SYNC_AUTO_EVENT && word->kind != PW_SYNC_MANUAL_EVENT) return 0;
++    if (pw_sync_word_load(word) & PW_SYNC_WORD_SLOW) return 0;
++
++    start = pw258_rdtsc();
++    for (;;)
++    {
++        old = pw_sync_word_load(word);
++        if (old & PW_SYNC_WORD_SLOW)
++        {
++            pw258_spin_finished(&pw258_stat_slow);
++            return 0;
++        }
++        if ((uint32_t)old && pw_sync_word_try_wait(word))
++        {
++            pw258_spin_finished(&pw258_stat_hits);
++            return 1;
++        }
++        if (pw258_rdtsc() - start >= budget)
++        {
++            pw258_spin_finished(&pw258_stat_expired);
++            return 0;
++        }
++        __asm__ __volatile__("pause");
++    }
++}

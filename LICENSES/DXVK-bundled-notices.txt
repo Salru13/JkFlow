@@ -1,0 +1,121 @@
+DXVK 1.10.3 (sce_module/dxvknative.prx and blur-files/d3d9.c988.dll): third-party
+code inside the DXVK tree besides DXVK's own zlib/libpng licence (DXVK-zlib.txt).
+Each notice is copied from the DXVK 1.10.3 tree the binaries are built from.
+
+==============================================================================
+OpenVR API header (src/dxvk/dxvk_openvr.cpp is compiled in): include/openvr/openvr.hpp
+From: DXVK 1.10.3 include/openvr/openvr.hpp (line 4) and include/openvr/LICENSE
+==============================================================================
+
+//========= Copyright Valve Corporation ============//
+
+Copyright (c) 2015, Valve Corporation
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
+SPIR-V header: include/spirv/spirv.hpp
+From: DXVK 1.10.3 include/spirv/spirv.hpp
+==============================================================================
+
+// Copyright (c) 2014-2019 The Khronos Group Inc.
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and/or associated documentation files (the "Materials"),
+// to deal in the Materials without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Materials, and to permit persons to whom the
+// Materials are furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Materials.
+// 
+// MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS KHRONOS
+// STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS SPECIFICATIONS AND
+// HEADER INFORMATION ARE LOCATED AT https://www.khronos.org/registry/ 
+// 
+// THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM,OUT OF OR IN CONNECTION WITH THE MATERIALS OR THE USE OR OTHER DEALINGS
+// IN THE MATERIALS.
+
+==============================================================================
+SPIR-V GLSL.std.450 header: include/spirv/GLSL.std.450.h
+From: DXVK 1.10.3 include/spirv/GLSL.std.450.h
+==============================================================================
+
+/*
+** Copyright (c) 2014-2016 The Khronos Group Inc.
+**
+** Permission is hereby granted, free of charge, to any person obtaining a copy
+** of this software and/or associated documentation files (the "Materials"),
+** to deal in the Materials without restriction, including without limitation
+** the rights to use, copy, modify, merge, publish, distribute, sublicense,
+** and/or sell copies of the Materials, and to permit persons to whom the
+** Materials are furnished to do so, subject to the following conditions:
+**
+** The above copyright notice and this permission notice shall be included in
+** all copies or substantial portions of the Materials.
+**
+** MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS KHRONOS
+** STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS SPECIFICATIONS AND
+** HEADER INFORMATION ARE LOCATED AT https://www.khronos.org/registry/ 
+**
+** THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+** OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+** FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+** THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+** LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+** FROM,OUT OF OR IN CONNECTION WITH THE MATERIALS OR THE USE OR OTHER DEALINGS
+** IN THE MATERIALS.
+*/
+
+==============================================================================
+Vulkan headers, Apache-2.0 (full text: Apache-2.0.txt): include/vulkan/vulkan_core.h
+From: DXVK 1.10.3 include/vulkan/vulkan_core.h
+==============================================================================
+
+/*
+** Copyright 2015-2022 The Khronos Group Inc.
+**
+** SPDX-License-Identifier: Apache-2.0
+*/
+
+==============================================================================
+SHA-1, public domain: src/util/sha1/sha1.c
+From: DXVK 1.10.3 src/util/sha1/sha1.c
+==============================================================================
+
+/*
+ * SHA-1 in C
+ * By Steve Reid <steve@edmweb.com>
+ * 100% Public Domain
+ *
+

@@ -1,0 +1,3353 @@
+diff -ruN base/orbis/scripts/build-app-ps4.sh r4/orbis/scripts/build-app-ps4.sh
+--- base/orbis/scripts/build-app-ps4.sh
++++ r4/orbis/scripts/build-app-ps4.sh
+@@ -105,8 +105,11 @@
+ for f in "$PW"/src/*.c "$PW"/native/wine64_main.c "$PW"/native/pw_data_mount.c \
+          "$PW"/native/pw_diagnostics.c "$PW"/native/pw_wine_display.c \
+          "$PW"/native/pw_wine_library.c "$PW"/native/pw_wine_prefix.c \
+-         "$PW"/native/native279-username.c "$PW"/native/native279-username-orbis.c "$PW"/native/native279-username-env.c "$PW"/native/native280-username-ui.c "$PW"/native/native280-username-ui-file.c "$PW"/native/pw_osk_ps5.c "$PW"/native/native245_seed.c "$PW"/native/ps5log/*.c; do
++         "$PW"/native/native279-username.c "$PW"/native/native279-username-env.c "$PW"/native/blur100-display-name.c "$PW"/native/blur100-display-name-orbis.c "$PW"/native/pw_osk_ps5.c "$PW"/native/native245_seed.c "$PW"/native/ps5log/ps5log_ps5_net.c; do
+   [ -f "$f" ] || continue
++  # BLUR 1.00: no developer mode in the product (owner finding 30): no ps5log
++  # live channel (ps5log.c and its dev.conf probe) and no script replay parser.
++  [ "${f##*/}" = pw_script_input.c ] && continue
+   $CC $CFL -c "$f" -o "$OBJ/$(echo "${f#$PW/}" | tr '/' '_' | sed 's/\.c$/.o/')"
+ done
+ 
+@@ -202,7 +205,6 @@
+   # /data/homebrew/dev.conf is not yet readable and the title logs nowhere.
+   # Measured 2026-10-07: a copy at /data/homebrew alone produced total silence.
+   # The file is gitignored; it holds this workstation's address.
+-  [ -f "$ROOT/build/devconf/dev.conf" ] && EXTRA+=(--extra "$ROOT/build/devconf/dev.conf:dev.conf")
+ 
+   # ⚠ The Wine modules go to win/wine/lib/wine/x86_64-unix, NOT sce_module.
+   # wine64_main.c:64 PW_WINE64_RUNTIME "/win/wine/lib/wine/x86_64-unix", searched
+@@ -292,6 +294,10 @@
+   # They come debug-stripped from the host build's install tree, which is what
+   # keeps this near upstream's 515 MiB rather than the 1.3 GB it builds as.
+   PELIB=$PW/.deps/wine-host/install/usr/lib/wine
++  # BLUR 1.00: the renamed engine's PE runtime (wow64.dll, wowblur.dll and the
++  # refreshed i386 winevulkan.dll), the one the seed's runtime pins name.
++  PELIB=${PW_PELIB:-$PELIB}
++  WOW_CPU_DLL=${PW_WOW_CPU_DLL:-wowprospero.dll}
+   # A PS4 diagnostic build can override the host-built 32-bit ntdll PE. Keep
+   # this opt-in so normal packages continue using the pinned host runtime.
+   PS4_NTDLL32_DLL="${PS4_NTDLL32_DLL:-}"
+@@ -360,8 +366,8 @@
+   # its Unix half. Without the PE half Wine builds a builtin module out of the
+   # PRX alone, finds no DllMain in it, and stops with
+   #     err:wow:load_64bit_module failed to load dll c0000142
+-  if [ ! -f "$PELIB/x86_64-windows/wowprospero.dll" ]; then
+-    echo "   X no wowprospero.dll in the PE runtime" >&2
++  if [ ! -f "$PELIB/x86_64-windows/$WOW_CPU_DLL" ]; then
++    echo "   X no $WOW_CPU_DLL in the PE runtime" >&2
+     echo "     sh prospero-win/tools/build_wowprospero.sh --build .deps/wine-host/build --source .deps/wine-host/source" >&2
+     echo "     then strip it and copy it into $PELIB/x86_64-windows/" >&2
+     exit 1
+diff -ruN base/orbis/src/native/pw_wow_log_ps4.c r4/orbis/src/native/pw_wow_log_ps4.c
+--- base/orbis/src/native/pw_wow_log_ps4.c
++++ r4/orbis/src/native/pw_wow_log_ps4.c
+@@ -24,10 +24,11 @@
+ #include <string.h>
+ #include <unistd.h>
+ 
+-/* Beside the title's own session logs. prospero-win makes that directory, and
+- * both are pulled off with scripts/ftp-get.py. */
+-#define PW_WOW_LOG_DIR  "/data/prospero-win/logs"
+-#define PW_WOW_LOG_PATH PW_WOW_LOG_DIR "/wowprospero.log"
++/* BLUR 1.00: beside the title's session logs, in $BLUR_LOG_DIR (the JkFlow
++ * Logs folder, set by the launcher). Without it nothing is written and no
++ * folder is made: there is no fixed fallback. */
++#include <stdlib.h>
++#define PW_WOW_LOG_NAME "/wowblur.log"
+ 
+ int sceKernelDebugOutText(int channel, const char *text);
+ 
+@@ -51,11 +52,13 @@
+     /* ⚠ 0777/0666 and a chmod: GoldHEN's FTP server does not run as the title,
+      * so anything it makes 0700 cannot be read off the console afterwards --
+      * which is exactly how the title's own session logs ended up unreadable. */
+-    if ((fd = open(PW_WOW_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) {
+-        (void)mkdir("/data/prospero-win", 0777);
+-        (void)mkdir(PW_WOW_LOG_DIR, 0777);
+-        (void)chmod(PW_WOW_LOG_DIR, 0777);
+-        if ((fd = open(PW_WOW_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) return;
++    {
++        const char *dir = getenv("BLUR_LOG_DIR");
++        char path[512];
++
++        if (!dir || !dir[0] || snprintf(path, sizeof(path), "%s" PW_WOW_LOG_NAME, dir) >= (int)sizeof(path))
++            return;
++        if ((fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666)) < 0) return;
+     }
+     (void)fchmod(fd, 0666);   /* the title's umask masks the mode above */
+     (void)!write(fd, line, (size_t)length);
+diff -ruN base/prospero/native/blur100-display-name-orbis.c r4/prospero/native/blur100-display-name-orbis.c
+--- base/prospero/native/blur100-display-name-orbis.c
++++ r4/prospero/native/blur100-display-name-orbis.c
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Copyright 2026 XxXJoker13XxX and contributors */
++#include "blur100-display-name.h"
++#include <orbis/UserService.h>
++
++/* The same foreground local user as pad/HID startup; the existing lifecycle
++ * owns UserService init/terminate. */
++int pw_blur100_display_name_from_orbis(PwBlurName *out, int *sanitized)
++{
++    static const PwBlurNameOps ops = { sceUserServiceGetForegroundUser, sceUserServiceGetUserName };
++    return pw_blur100_display_name(&ops, out, sanitized);
++}
+diff -ruN base/prospero/native/blur100-display-name.c r4/prospero/native/blur100-display-name.c
+--- base/prospero/native/blur100-display-name.c
++++ r4/prospero/native/blur100-display-name.c
+@@ -0,0 +1,159 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Copyright 2026 XxXJoker13XxX and contributors */
++/* The game display name from the PS4 local user name, made portable without
++ * the system keyboard (audit finding 4). See blur100-display-name.h. */
++#include "blur100-display-name.h"
++#include <string.h>
++
++static int portable_char(unsigned char c)
++{
++    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
++           c == '_' || c == '-' || c == '.';
++}
++
++/* The accepted native policy (formerly pw_blur_name_portable): 1..16 bytes
++ * of A-Z a-z 0-9 . _ -, no dot at either end, NUL within extent. */
++static int portable(const char *in, size_t extent, size_t *length)
++{
++    size_t n = 0;
++    while (n < extent && n <= PW_BLUR100_NAME_MAX && in[n]) {
++        if (!portable_char((unsigned char)in[n])) return 0;
++        n++;
++    }
++    if (!n || n > PW_BLUR100_NAME_MAX || n >= extent || in[n]) return 0;
++    if (in[0] == '.' || in[n - 1] == '.') return 0;
++    *length = n;
++    return 1;
++}
++
++/* U+00C0..U+00FF and U+0100..U+017F: the base letter, '?' for a two-letter
++ * fold (fold2), '_' for a non-letter (x and division sign). */
++static const char latin1[] =
++    "AAAAAA?CEEEEIIII" "DNOOOOO_OUUUUY??" "aaaaaa?ceeeeiiii" "dnooooo_ouuuuy?y";
++static const char latin_ext_a[] =
++    "AaAaAaCcCcCcCcDd" "DdEeEeEeEeEeGgGg" "GgGgHhHhIiIiIiIi" "Ii??JjKkkLlLlLlL"
++    "lLlNnNnNnnNnOoOo" "Oo??RrRrRrSsSsSs" "SsTtTtTtUuUuUuUu" "UuUuWwYyYZzZzZzs";
++
++static const char *fold2(uint32_t code)
++{
++    switch (code) {
++    case 0xc6: return "AE";
++    case 0xde: return "TH";
++    case 0xdf: return "ss";
++    case 0xe6: return "ae";
++    case 0xfe: return "th";
++    case 0x132: return "IJ";
++    case 0x133: return "ij";
++    case 0x152: return "OE";
++    case 0x153: return "oe";
++    default: return "_";
++    }
++}
++
++/* The ASCII text for one code point: a letter, two letters, "" (combining
++ * mark, dropped) or "_". */
++static const char *fold(uint32_t code, char one[2])
++{
++    char c = 0;
++    if (code < 0x80) c = portable_char((unsigned char)code) ? (char)code : '_';
++    else if (code >= 0x300 && code <= 0x36f) return "";
++    else if (code >= 0xc0 && code <= 0xff) c = latin1[code - 0xc0];
++    else if (code >= 0x100 && code <= 0x17f) c = latin_ext_a[code - 0x100];
++    else if (code >= 0x218 && code <= 0x21b) c = "SsTt"[code - 0x218];
++    else c = '_';
++    if (c == '?') return fold2(code);
++    one[0] = c;
++    one[1] = 0;
++    return one;
++}
++
++/* One UTF-8 scalar at in[*i] (strict: shortest form, no surrogates); a
++ * malformed byte is consumed alone and reported as U+FFFD. */
++static uint32_t next_scalar(const unsigned char *in, size_t length, size_t *i)
++{
++    unsigned char first = in[(*i)++];
++    uint32_t code, minimum;
++    unsigned extra;
++    if (first < 0x80) return first;
++    if (first >= 0xc2 && first <= 0xdf) { code = first & 31u; extra = 1; minimum = 0x80; }
++    else if (first >= 0xe0 && first <= 0xef) { code = first & 15u; extra = 2; minimum = 0x800; }
++    else if (first >= 0xf0 && first <= 0xf4) { code = first & 7u; extra = 3; minimum = 0x10000; }
++    else return 0xfffd;
++    if (*i + extra > length) return 0xfffd;
++    for (unsigned j = 0; j < extra; j++)
++        if ((in[*i + j] & 0xc0) != 0x80) return 0xfffd;
++    for (unsigned j = 0; j < extra; j++) code = (code << 6) | (in[(*i)++] & 63u);
++    if (code < minimum || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return 0xfffd;
++    return code;
++}
++
++static int trim_char(char c) { return c == '_' || c == '.' || c == '-'; }
++
++size_t pw_blur100_name_sanitize(const char *in, size_t extent, char out[PW_BLUR100_NAME_MAX + 1],
++                                int *sanitized)
++{
++    size_t length = 0, n = 0;
++    char work[4 * PW_BLUR100_NAME_MAX + 8];
++    if (sanitized) *sanitized = 1;
++    if (in && portable(in, extent, &length)) {
++        memcpy(out, in, length);
++        out[length] = 0;
++        if (sanitized) *sanitized = 0;
++        return length;
++    }
++    length = 0;
++    while (in && length < extent && in[length]) length++;
++    /* Converted text, '_' collapsed, leading '_' '.' '-' never stored; stop
++     * once enough is kept for 16 bytes after the trailing trim. */
++    for (size_t i = 0; i < length && n < sizeof(work) - 3;) {
++        char one[2];
++        const char *text = fold(next_scalar((const unsigned char *)in, length, &i), one);
++        for (; *text; text++) {
++            if (!n && trim_char(*text)) continue;
++            if (*text == '_' && n && work[n - 1] == '_') continue;
++            work[n++] = *text;
++        }
++    }
++    if (n > PW_BLUR100_NAME_MAX) n = PW_BLUR100_NAME_MAX;
++    while (n && trim_char(work[n - 1])) n--;
++    if (!n) {
++        memcpy(out, "Player", sizeof("Player"));
++        return sizeof("Player") - 1;
++    }
++    memcpy(out, work, n);
++    out[n] = 0;
++    return n;
++}
++
++int pw_blur100_display_name(const PwBlurNameOps *ops, PwBlurName *out, int *sanitized)
++{
++    char text[PW_BLUR_NAME_UTF8_CAP], name[PW_BLUR100_NAME_MAX + 1];
++    int32_t user = -1, foreground_rc = -1, username_rc = -1;
++    int local = 0, changed = 1;
++    if (ops && ops->foreground && ops->username) {
++        foreground_rc = ops->foreground(&user);
++        if (foreground_rc != 0 || user < 0) user = -1;
++        else {
++            memset(text, 0, sizeof(text));
++            username_rc = ops->username(user, text, sizeof(text));
++            local = username_rc == 0;
++        }
++    }
++    if (!local) user = -1;
++    size_t bytes = pw_blur100_name_sanitize(local ? text : NULL, local ? sizeof(text) : 0, name, &changed);
++    if (out) {
++        /* A portable ASCII name always validates. */
++        if (!pw_blur_name_validate(name, bytes + 1, out)) {
++            memset(out, 0, sizeof(*out));
++            memcpy(out->utf8, "Player", sizeof("Player"));
++            out->bytes = out->units = out->scalars = sizeof("Player") - 1;
++            for (size_t i = 0; i < out->units; i++) out->utf16[i] = (uint16_t)out->utf8[i];
++        }
++        out->source = PW_BLUR_NAME_LOCAL;
++        out->user_id = user;
++        out->foreground_rc = foreground_rc;
++        out->username_rc = username_rc;
++    }
++    if (sanitized) *sanitized = changed;
++    return local;
++}
+diff -ruN base/prospero/native/blur100-display-name.h r4/prospero/native/blur100-display-name.h
+--- base/prospero/native/blur100-display-name.h
++++ r4/prospero/native/blur100-display-name.h
+@@ -0,0 +1,30 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Copyright 2026 XxXJoker13XxX and contributors */
++#ifndef BLUR100_DISPLAY_NAME_H
++#define BLUR100_DISPLAY_NAME_H
++/* The game display name from the PS4 local user name (audit finding 4).
++ * The system keyboard is never opened: a name that is not portable is
++ * converted. Portable: 1..16 bytes of A-Z a-z 0-9 . _ - and no dot at
++ * either end; such a name stays byte-identical. Any other name: Latin
++ * letters with diacritics fold to ASCII (Latin-1 Supplement, Latin
++ * Extended-A, Romanian comma letters), combining marks drop, every other
++ * character becomes _, repeated _ collapse, _ . - are trimmed at
++ * both ends, at most 16 bytes, and "Player" when nothing is left. The online
++ * (AMAX) account is not involved. */
++#include "native279-username.h"
++
++enum { PW_BLUR100_NAME_MAX = 16 };
++
++/* Reads at most extent bytes of in (stops at NUL). out always receives a
++ * portable, NUL-terminated name; returns its length (1..16). *sanitized is 0
++ * only when the input was already portable and was copied unchanged. */
++size_t pw_blur100_name_sanitize(const char *in, size_t extent, char out[PW_BLUR100_NAME_MAX + 1],
++                                int *sanitized);
++/* The foreground local user name through ops, sanitized. out always holds a
++ * valid portable name (source PW_BLUR_NAME_LOCAL). Returns 1 when the local
++ * name was read, 0 when no foreground user or name was available ("Player").
++ * No account, network, save or keyboard is touched. */
++int pw_blur100_display_name(const PwBlurNameOps *ops, PwBlurName *out, int *sanitized);
++/* The same with sceUserServiceGetForegroundUser / sceUserServiceGetUserName. */
++int pw_blur100_display_name_from_orbis(PwBlurName *out, int *sanitized);
++#endif
+diff -ruN base/prospero/native/native245_seed.c r4/prospero/native/native245_seed.c
+--- base/prospero/native/native245_seed.c
++++ r4/prospero/native/native245_seed.c
+@@ -144,6 +144,7 @@
+     case N245_PRESENT: return "present";
+     case N245_PRESENT_EXTERNAL: return "present-external";
+     case N245_RESUMED_PUBLISH: return "resumed-publish";
++    case N245_UPDATED: return "updated";
+     case N245_DISABLED: return "disabled";
+     case N245_NO_SEED: return "no-seed";
+     case N245_REFUSED_FOREIGN_PROFILE: return "refused-foreign-profile";
+@@ -943,3 +944,157 @@
+     n245_index_free(&ix);
+     return st;
+ }
++
++/* ------------------------------------------------------------------ import2 */
++/* BLUR 1.00 (plan Task T1 item 4): the seed straight into prefix_dir. See
++ * native245_seed.h. No profiles/ and no prefixes/<slug>: the title names the
++ * prefix itself. */
++static int n245_in_users(const char *rel)
++{
++    static const char users[] = "drive_c/users/";
++    return !strncmp(rel, users, sizeof(users) - 1);
++}
++
++N245Status n245_seed_import2(const char *const *app_roots, size_t root_count, const char *prefix_dir,
++                             const char *pinned_end, N245Result *r,
++                             void (*progress)(void *ctx, unsigned done, unsigned total), void *ctx,
++                             int update_mode)
++{
++    char seed[N245_PATH_MAX], path[N245_PATH_MAX], src[N245_PATH_MAX], staging[N245_PATH_MAX];
++    char owner_text[128], marker_text[128];
++    char *marker = NULL, *owner = NULL;
++    size_t marker_size = 0, owner_size = 0, i;
++    int is_dir = 0, updating = 0;
++    unsigned k;
++    N245Index ix;
++    N245Status st = N245_ERR_ARGS;
++    const char *root;
++
++    if (!r) return N245_ERR_ARGS;
++    memset(r, 0, sizeof(*r));
++    memset(&ix, 0, sizeof(ix));
++#define N245_DONE(code) do { st = (code); goto done; } while (0)
++    if (!pinned_end) N245_DONE(N245_DISABLED);
++    if (!app_roots || !prefix_dir || prefix_dir[0] != '/' || strlen(pinned_end) != 64 || !n245_is_hex64(pinned_end)) {
++        snprintf(r->detail, sizeof(r->detail), "bad arguments");
++        N245_DONE(N245_ERR_ARGS);
++    }
++    seed[0] = 0;
++    for (i = 0; i < root_count; i++) {
++        if (!app_roots[i]) continue;
++        if (!n245_join3(path, sizeof(path), app_roots[i], N245_SEED_DIR, "seed.idx")) continue;
++        if (n245_exists(path, &is_dir) && !is_dir) {
++            n245_join(seed, sizeof(seed), app_roots[i], N245_SEED_DIR);
++            snprintf(r->seed_root, sizeof(r->seed_root), "%s", app_roots[i]);
++            break;
++        }
++    }
++    if (!seed[0]) N245_DONE(N245_NO_SEED);
++    if (!n245_join(path, sizeof(path), seed, "seed.idx")) N245_DONE(N245_ERR_ARGS);
++    st = n245_index_load(path, pinned_end, &ix, r->detail, sizeof(r->detail));
++    if (st != N245_IMPORTED) goto done;
++    r->files_total = ix.file_count;
++    r->dirs_total = ix.dir_count;
++    snprintf(owner_text, sizeof(owner_text), "N245-OWNER %s\n", ix.end_hash);
++    snprintf(marker_text, sizeof(marker_text), "N245-COMPLETE %s\n", ix.end_hash);
++    if (snprintf(staging, sizeof(staging), "%s.n245-staging", prefix_dir) >= (int)sizeof(staging))
++        N245_DONE(N245_ERR_ARGS);
++
++    /* 1. Fast path: this seed's marker in the prefix. */
++    if (n245_exists(prefix_dir, &is_dir)) {
++        if (!is_dir) {
++            snprintf(r->detail, sizeof(r->detail), "%.200s is not a folder", prefix_dir);
++            N245_DONE(N245_REFUSED_FOREIGN_PREFIX);
++        }
++        if (!n245_join(path, sizeof(path), prefix_dir, N245_MARKER_FILE)) N245_DONE(N245_ERR_ARGS);
++        if (n245_read_all(path, 256, &marker, &marker_size) == 0 && marker_size == strlen(marker_text) &&
++            !memcmp(marker, marker_text, marker_size))
++            N245_DONE(N245_PRESENT);
++        if (!update_mode) {
++            snprintf(r->detail, sizeof(r->detail), "%.200s exists and was not completed by this seed", prefix_dir);
++            N245_DONE(N245_REFUSED_FOREIGN_PREFIX);
++        }
++        updating = 1;
++        root = prefix_dir;
++    } else {
++        /* 2. Fresh: build in staging (resumed; any earlier owner is adopted,
++         *    since every file below is verified against this index). */
++        if (n245_exists(staging, &is_dir)) {
++            if (!is_dir) {
++                snprintf(r->detail, sizeof(r->detail), "%.200s is not a folder", staging);
++                N245_DONE(N245_REFUSED_STAGING);
++            }
++        } else if (n245_mkdir_parent(staging) || n245_mkdir_one(staging)) {
++            snprintf(r->detail, sizeof(r->detail), "mkdir %.200s errno=%d", staging, errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        if (!n245_join(path, sizeof(path), staging, N245_OWNER_FILE)) N245_DONE(N245_ERR_ARGS);
++        if (n245_read_all(path, 256, &owner, &owner_size) != 0 || owner_size != strlen(owner_text) ||
++            memcmp(owner, owner_text, owner_size)) {
++            if (n245_publish_bytes(path, owner_text, strlen(owner_text))) {
++                snprintf(r->detail, sizeof(r->detail), "owner stamp errno=%d", errno);
++                N245_DONE(N245_ERR_IO);
++            }
++            n245_sync_dir(staging);
++        }
++        root = staging;
++    }
++
++    for (k = 0; k < ix.dir_count; k++) {
++        if (!n245_join(path, sizeof(path), root, ix.dirs[k]) || n245_mkdir_p(path)) {
++            snprintf(r->detail, sizeof(r->detail), "mkdir %s errno=%d", ix.dirs[k], errno);
++            N245_DONE(N245_ERR_IO);
++        }
++    }
++    for (k = 0; k < ix.file_count; k++) {
++        const N245File *f = &ix.files[k];
++        if (progress) progress(ctx, k, ix.file_count);
++        if (!n245_join(path, sizeof(path), root, f->rel)) N245_DONE(N245_ERR_ARGS);
++        /* An update never touches the player's files: under drive_c/users/
++         * only a missing file is created. */
++        if (updating && n245_in_users(f->rel) && n245_exists(path, NULL)) { r->kept++; continue; }
++        if (n245_file_matches(path, f->size, f->sha)) { r->kept++; continue; }
++        if (!strcmp(f->src, "-")) {
++            if (!n245_join3(src, sizeof(src), seed, "objects", f->sha)) N245_DONE(N245_ERR_ARGS);
++        } else if (!n245_join(src, sizeof(src), r->seed_root, f->src)) {
++            N245_DONE(N245_ERR_ARGS);
++        }
++        if (n245_mkdir_parent(path)) {
++            snprintf(r->detail, sizeof(r->detail), "mkdir parent of %s errno=%d", f->rel, errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        st = n245_copy_verified(src, path, f->size, f->sha, &r->bytes_copied, r->detail, sizeof(r->detail));
++        if (st != N245_IMPORTED) goto done;
++        r->copied++;
++    }
++    if (progress) progress(ctx, ix.file_count, ix.file_count);
++
++    /* 3. Every file is verified: the completion marker last. */
++    if (!n245_join(path, sizeof(path), root, N245_MARKER_FILE) ||
++        n245_publish_bytes(path, marker_text, strlen(marker_text))) {
++        snprintf(r->detail, sizeof(r->detail), "completion stamp errno=%d", errno);
++        N245_DONE(N245_ERR_IO);
++    }
++    n245_sync_dir(root);
++    if (!updating) {
++        if (N245_FAULT("rename", prefix_dir) || rename(staging, prefix_dir) != 0) {
++            snprintf(r->detail, sizeof(r->detail), "rename staging errno=%d", errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        {
++            char parent[N245_PATH_MAX];
++            const char *slash = strrchr(prefix_dir, '/');
++            size_t n = slash ? (size_t)(slash - prefix_dir) : 0;
++            if (n && n < sizeof(parent)) { memcpy(parent, prefix_dir, n); parent[n] = 0; n245_sync_dir(parent); }
++        }
++    }
++    st = updating ? N245_UPDATED : N245_IMPORTED;
++
++done:
++#undef N245_DONE
++    r->status = st;
++    free(marker);
++    free(owner);
++    n245_index_free(&ix);
++    return st;
++}
+diff -ruN base/prospero/native/native245_seed.h r4/prospero/native/native245_seed.h
+--- base/prospero/native/native245_seed.h
++++ r4/prospero/native/native245_seed.h
+@@ -49,6 +49,7 @@
+     N245_PRESENT = 1,             /* our marker + identical profile already there */
+     N245_PRESENT_EXTERNAL = 2,    /* identical profile, prefix not ours (e.g. task244 push): untouched */
+     N245_RESUMED_PUBLISH = 3,     /* prefix completed earlier, profile published now */
++    N245_UPDATED = 4,             /* import2 update mode: files outside drive_c/users/ refreshed */
+     N245_DISABLED = 10,           /* built without N245_SEED_END: importer compiled out */
+     N245_NO_SEED = 11,            /* package carries no seed: nothing to do */
+     N245_REFUSED_FOREIGN_PROFILE = 20,
+@@ -83,6 +84,24 @@
+                             const char *data_root, const char *pinned_end,
+                             N245Result *result);
+ 
++/* BLUR 1.00: the seed straight into prefix_dir (absolute, e.g. /data/BLUR/prefix),
++ * with no profiles/ and no prefixes/<slug>.
++ *   - prefix_dir holds this seed's .n245-complete: N245_PRESENT, nothing read.
++ *   - prefix_dir missing: built in <prefix_dir>.n245-staging (resumed from what
++ *     is there; every file is hash-verified, so an earlier owner is adopted),
++ *     the completion marker written last, then renamed: N245_IMPORTED.
++ *   - prefix_dir without this seed's marker: update_mode 0 refuses
++ *     (N245_REFUSED_FOREIGN_PREFIX); update_mode 1 replaces every file outside
++ *     drive_c/users/ that differs (verified copy, then rename), creates only
++ *     missing files under drive_c/users/ and never touches existing ones there,
++ *     then writes the marker last: N245_UPDATED. An interrupted update keeps
++ *     the old marker, so the next start runs it again.
++ * progress (may be NULL) is told done/total files as they are checked. */
++N245Status n245_seed_import2(const char *const *app_roots, size_t root_count, const char *prefix_dir,
++                             const char *pinned_end, N245Result *result,
++                             void (*progress)(void *ctx, unsigned done, unsigned total), void *ctx,
++                             int update_mode);
++
+ const char *n245_status_name(N245Status status);
+ 
+ /* SHA-256 helpers, exported for the fixtures. */
+diff -ruN base/prospero/native/pw_diagnostics.c r4/prospero/native/pw_diagnostics.c
+--- base/prospero/native/pw_diagnostics.c
++++ r4/prospero/native/pw_diagnostics.c
+@@ -29,7 +29,6 @@
+  * holds both, so a slow network never stalls a caller that only writes the
+  * buffer, such as the title's loop calling pw_diagnostics_tick(). */
+ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+-static pthread_mutex_t net_lock = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t wake = PTHREAD_COND_INITIALIZER;    /* records to write, or a pass asked */
+ static pthread_cond_t drained = PTHREAD_COND_INITIALIZER; /* the writer finished a pass */
+ static volatile sig_atomic_t fd = -1;
+@@ -40,11 +39,6 @@
+ static size_t used, bytes;
+ static uint64_t sequence, last_signal, dropped_records, dropped_bytes, dropped_total;
+ static int writing, writer_started, writer_refused;
+-/* Set while the retry thread reconnects: records then skip the network (they
+- * are still saved) instead of waiting for the connect timeout. */
+-static int reconnecting; /* __atomic: written by the retry thread */
+-static int retry_started;
+-static uint64_t retry_interval_ns = 5000000000ull;
+ /* The space a chunk keeps for the signal path: pw_diagnostics_emergency()
+  * writes up to 164 bytes past what the writer counted. */
+ enum { PW_DIAGNOSTICS_RESERVE = 192, PW_DIAGNOSTICS_CADENCE_NS = 100000000 };
+@@ -118,28 +112,6 @@
+     bytes += run;
+ }
+ 
+-/* Writer thread only: each record's message, without the REC prefix, as
+- * its own ps5log record. */
+-static void send_records(const char *data, size_t length)
+-{
+-    char message[PS5LOG_MAX_LINE + 96];
+-    size_t at = 0;
+-    if (__atomic_load_n(&reconnecting, __ATOMIC_ACQUIRE)) return;
+-    pthread_mutex_lock(&net_lock);
+-    while (at < length) {
+-        const char *end = memchr(data + at, '\n', length - at);
+-        size_t line = end ? (size_t)(end - (data + at)) : length - at;
+-        const char *text = data + at;
+-        size_t skip = 0;
+-        for (int spaces = 0; skip < line && spaces < 3; skip++) spaces += text[skip] == ' ';
+-        size_t n = line - skip < sizeof(message) ? line - skip : sizeof(message) - 1;
+-        memcpy(message, text + skip, n); message[n] = 0;
+-        (void)ps5log_line(PS5LOG_INFO, message);
+-        at += line + (end != NULL);
+-    }
+-    pthread_mutex_unlock(&net_lock);
+-}
+-
+ /* Lock held on entry and return. Takes the pending buffer and saves and
+  * sends it with the lock released. */
+ static void pass(void)
+@@ -157,7 +129,6 @@
+     writing = 1;
+     pthread_mutex_unlock(&lock);
+     save(draining, length);
+-    send_records(draining, length);
+     pthread_mutex_lock(&lock);
+     writing = 0;
+     pthread_cond_broadcast(&drained);
+@@ -192,32 +163,6 @@
+     while (writing || ready()) pthread_cond_wait(&drained, &lock);
+ }
+ 
+-static void sleep_ns(uint64_t ns)
+-{
+-    struct timespec delay = { (time_t)(ns / 1000000000ull), (long)(ns % 1000000000ull) };
+-    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {}
+-}
+-
+-/* Brings the TCP channel back after it drops. A reconnect waits up to the
+- * channel's connect timeout, so it runs here and never in the title's loop. */
+-static void *retry_network(void *unused)
+-{
+-    (void)unused;
+-    for (;;) {
+-        sleep_ns(retry_interval_ns);
+-        pthread_mutex_lock(&net_lock);
+-        int up = ps5log_enabled();
+-        pthread_mutex_unlock(&net_lock);
+-        if (up) continue;
+-        __atomic_store_n(&reconnecting, 1, __ATOMIC_RELEASE);
+-        pthread_mutex_lock(&net_lock);
+-        (void)ps5log_reconnect();
+-        pthread_mutex_unlock(&net_lock);
+-        __atomic_store_n(&reconnecting, 0, __ATOMIC_RELEASE);
+-    }
+-    return NULL;
+-}
+-
+ static int start_thread(void *(*entry)(void *))
+ {
+     pthread_attr_t attributes;
+@@ -231,17 +176,31 @@
+     return status == 0 ? 0 : -1;
+ }
+ 
+-/* Lock held. Both threads start with the session: records before it only
+- * wait in the buffer. */
++/* Lock held. The writer starts with the session: records before it only
++ * wait in the buffer. BLUR 1.00: no network channel and no reconnect thread
++ * (the product has no live log stream). */
+ static void start_threads(void)
+ {
+-    if (!retry_started && start_thread(retry_network) == 0) retry_started = 1;
+     if (!writer_started && !writer_refused && start_thread(write_records) == 0) writer_started = 1;
+     pthread_cond_signal(&wake);
+ }
+ 
+ int pw_diagnostics_open(const char *root, const char *build, const char *profile, uint32_t cycle)
+ {
++    char directory[448];
++    if (!root || snprintf(directory, sizeof(directory), "%s/logs", root) >= (int)sizeof(directory)) {
++        pthread_mutex_lock(&lock);
++        disk_error = ENAMETOOLONG;
++        pthread_mutex_unlock(&lock);
++        return -1;
++    }
++    if (mkdir(root, 0777) != 0 && errno != EEXIST) return -1;
++    (void)chmod(root, 0777);
++    return pw_diagnostics_open_dir(directory, build, profile, cycle);
++}
++
++int pw_diagnostics_open_dir(const char *logs, const char *build, const char *profile, uint32_t cycle)
++{
+     char directory[448], index[512], number[32];
+     unsigned next = 0;
+     int counter, result = -1;
+@@ -249,15 +208,13 @@
+     wait_for_writer();
+     if (fd >= 0) { close(fd); fd = -1; }
+     disk_error = 0;
+-    if (!root || snprintf(directory, sizeof(directory), "%s/logs", root) >= (int)sizeof(directory)) {
++    if (!logs || snprintf(directory, sizeof(directory), "%s", logs) >= (int)sizeof(directory)) {
+         disk_error = ENAMETOOLONG; goto out;
+     }
+     /* ⚠ 0777/0666 and chmod (archive 0008): the logs are read over FTP, and
+      * GoldHEN's server does not run as the title; a 0700 directory or 0600
+      * file (the title's umask applies to open's mode) cannot be listed. */
+-    if (mkdir(root, 0777) != 0 && errno != EEXIST) { disk_error = errno; goto out; }
+     if (mkdir(directory, 0777) != 0 && errno != EEXIST) { disk_error = errno; goto out; }
+-    (void)chmod(root, 0777);
+     (void)chmod(directory, 0777);
+     snprintf(index, sizeof(index), "%s/next.txt", directory);
+     counter = open(index, O_RDONLY);
+@@ -332,9 +289,6 @@
+     wait_for_writer();
+     if (fd >= 0) { (void)fsync(fd); close(fd); fd = -1; }
+     pthread_mutex_unlock(&lock);
+-    pthread_mutex_lock(&net_lock);
+-    ps5log_close(reason);
+-    pthread_mutex_unlock(&net_lock);
+ }
+ 
+ void pw_diagnostics_resume(void)
+@@ -347,11 +301,6 @@
+         else pthread_cond_signal(&wake);
+     }
+     pthread_mutex_unlock(&lock);
+-    /* The title is still running after a failed restart: bring the channel
+-     * back now, as before closing it, rather than in the retry thread's time. */
+-    pthread_mutex_lock(&net_lock);
+-    (void)ps5log_reconnect();
+-    pthread_mutex_unlock(&net_lock);
+ }
+ 
+ void pw_diagnostics_status(char *buffer, size_t size)
+@@ -401,13 +350,12 @@
+         n = append_hex(line, n, segment_offset);
+     }
+     line[n++] = '\n';
+-    /* write() and send() only: no lock, no allocation, no formatting library. */
++    /* write() only: no lock, no allocation, no formatting library. */
+     if (fd >= 0) { ssize_t result = write(fd, line, n); (void)result; }
+-    (void)ps5log_raw(line, n);
+ }
+ 
+ #ifdef PW_DIAGNOSTICS_TESTING
+-void pw_diagnostics_test_retry_interval(uint64_t ns) { retry_interval_ns = ns; }
++void pw_diagnostics_test_retry_interval(uint64_t ns) { (void)ns; }   /* no retry thread in BLUR */
+ void pw_diagnostics_test_refuse_writer(int refuse) { writer_refused = refuse; }
+ void pw_diagnostics_test_settle(void)
+ {
+diff -ruN base/prospero/native/pw_diagnostics.h r4/prospero/native/pw_diagnostics.h
+--- base/prospero/native/pw_diagnostics.h
++++ r4/prospero/native/pw_diagnostics.h
+@@ -16,6 +16,10 @@
+ enum { PW_DIAGNOSTICS_SESSIONS = 8 };
+ int pw_diagnostics_open(const char *root, const char *build, const char *profile,
+                         uint32_t cycle);
++/* BLUR 1.00: the same, with session-N.log straight into directory (the
++ * JkFlow Logs folder); its parent must exist. */
++int pw_diagnostics_open_dir(const char *directory, const char *build, const char *profile,
++                            uint32_t cycle);
+ /* Any thread: formats the record into the buffer and returns; a writer
+  * thread saves it and sends it. Never waits for the file or the network. */
+ void pw_diagnostics_log(const char *format, ...);
+diff -ruN base/prospero/native/pw_osk_ps5.c r4/prospero/native/pw_osk_ps5.c
+--- base/prospero/native/pw_osk_ps5.c
++++ r4/prospero/native/pw_osk_ps5.c
+@@ -131,7 +131,7 @@
+         logf_(osk, line);
+     }
+     memset(osk->text, 0, sizeof(osk->text));
+-    pw_osk_ps5_utf16(title ? title : "prospero-win", osk->title, PW_OSK_PS5_TITLE);
++    pw_osk_ps5_utf16(title ? title : "JkFlow", osk->title, PW_OSK_PS5_TITLE);
+     memset(&osk->param, 0, sizeof(osk->param));
+     osk->param.user_id = osk->user_id;
+     osk->param.type = SCE_IME_TYPE_BASIC_LATIN;   /* the keys a game can be sent */
+diff -ruN base/prospero/native/wine64_main.c r4/prospero/native/wine64_main.c
+--- base/prospero/native/wine64_main.c
++++ r4/prospero/native/wine64_main.c
+@@ -2,15 +2,17 @@
+ /*
+  * Native entry for running Wine's own Unix side inside the title.
+  *
+- * The title runs one game per process (src/pw_wine_launch.h). Started with
+- * no game it shows the launcher, without loading Wine; choosing a game
+- * restarts the title with sceSystemServiceLoadExec and the game's
+- * arguments. Holding Options+Create for 3 s in a game sends it Alt+F4;
+- * when Wine exits, or the game does not close in time, the title restarts
+- * into the launcher.
++ * BLUR 1.00 (title BLUR00001): one game per process. The title asks for the
++ * /data mount, finds /data/JkFlow (any letter case; the BLUR folder of the
++ * 1.00 test builds is moved into it once), opens the display, prepares
++ * <JkFlow>/System/prefix from the
++ * package's seed (first start or a new seed), shows the BLUR launcher
++ * (launcher/src, bl_frontend_run) and starts Blur from /data/JkFlow/Blur (any letter case).
++ * Holding Options+Create for 3 s in a game sends it Alt+F4; when Blur exits,
++ * or does not close in time, the title starts again into its launcher
++ * (LoadExec of its own eboot); only if that fails does it close to Home.
+  *
+- * The launcher and a game request the /data mount, where the library is.
+- * A game then loads ntdll.prx, prepares Wine's
++ * The game then loads ntdll.prx, prepares Wine's
+  * environment and enters __wine_main on a dedicated thread
+  * (src/pw_wine_start.c). Wine's stderr reaches ps5log/1 through the sink
+  * ntdll exports (Wine patch 0560), so its debug channels become telemetry;
+@@ -19,10 +21,6 @@
+  * Wine's address-space counters until Wine exits the process or the run
+  * deadline passes. Wine's audio driver plays its mix on the console's main
+  * audio port through the title's audio sink.
+- *
+- * A single-program title (tools/build_native.sh, PW_FIXED_PROFILE) has no
+- * launcher: started with no game it starts its one profile, and where the
+- * title would go back to the launcher it closes, to the console's home.
+  */
+ #include "ps5log/ps5log.h"
+ #include "pw_diagnostics.h"
+@@ -33,7 +31,6 @@
+ #endif
+ #include "../src/pw_wine_start.h"
+ #include "../src/pw_launcher_render.h"
+-#include "../src/pw_script_input.h"
+ #include "../src/pw_wine_launch.h"
+ #include "../src/pw_game_menu.h"
+ #include "pw_data_mount.h"
+@@ -44,6 +41,8 @@
+ #include "pw_videoout_ps5.h"
+ #include "pw_wine_library.h"
+ #include "pw_wine_prefix.h"
++#include "../wine/ps5/pw_wine_dl.h"
++#include "bl_paths.h"
+ #include "native245_seed.h"
+ #include "../src/pw_present.h"
+ #include "../src/pw_spinner.h"
+@@ -51,6 +50,7 @@
+ #include "pw_wine_display.h"
+ #include "../include/prospero_win.h"
+ 
++#include <dirent.h>
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <pthread.h>
+@@ -62,24 +62,25 @@
+ #include <orbis/_types/kernel.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <strings.h>
+ #include <sys/socket.h>
+ #include <time.h>
+ #include <unistd.h>
+-#include "pw_remote_control.h"
+-/* Blur launcher UI (launcher/ on branch blur-launcher-ui): the start screen,
+- * patch blur, settings and the loader. */
++/* BLUR launcher UI (launcher/src): Start, Patch, Settings, About and the loader. */
+ #include "bl_frontend.h"
+ #include "bl_loader.h"
+-#include "bl_saves.h"
++#include "bl_ui.h"
++#include "bl_clock.h"
+ #include "bl_session.h"
++#include "bl_strings.h"
+ #include "native279-username.h"
+ #include "native279-username-env.h"
+-#include "native280-username-ui.h"
++#include "blur100-display-name.h"
+ 
+ #ifndef PW_TITLE_ID
+ #define PW_TITLE_ID "PPSA99995"
+ #endif
+-#define PW_APP_NAME "prospero-win-wine64"
++#define PW_APP_NAME "blur"
+ 
+ /* ⚠ The system suspend path waits for the GNM driver's per-frame submission
+  * completion notification, including frames submitted through Vulkan/AGC.
+@@ -105,21 +106,20 @@
+  * rather than produce a package that silently keeps 0x400000 mapped. */
+ extern int pw_relocated_wine_release_eboot(void);
+ #endif
+-#ifndef PW_FIXED_PROFILE
+-/* The id of the one profile a single-program title runs; "" for the launcher. */
+-#define PW_FIXED_PROFILE ""
+-#endif
+-static const char fixed_profile[] = PW_FIXED_PROFILE;
+-static int direct_maintenance; /* fixed once after the data grant */
+ /* N276_POLICY_BEGIN */
++/* BLUR 1.00: the game profile is the launcher's (BlDecision.profile_text,
++ * composed from the package's model-base.ini). This built-in copy is used
++ * only when that text is missing or does not parse (no display). Its [debug]
++ * env lines are the BLUR profile's engine values; the launcher's own env goes
++ * to extra[] (blur_apply_decision). The prefix is always <root>/prefix. */
+ static const char direct_profile_text[] =
+     "[application]\n"
+-    "id = blur-direct\n"
++    "id = blur\n"
+     "name = Blur\n"
+-    "executable = Z:\\data\\Pc\\Blur\\Blur.exe\n"
+-    "working_directory = Z:\\data\\Pc\\Blur\n"
++    "executable = Z:\\data\\JkFlow\\Blur\\Blur.exe\n"
++    "working_directory = Z:\\data\\JkFlow\\Blur\n"
+     "dll_overrides = d3d9=n\n"
+-    "prefix = blur-native248\n"
++    "prefix = default\n"
+     "runtime = wine-wow64\n"
+     "architecture = pe32\n"
+     "graphics = dxvk\n"
+@@ -137,25 +137,54 @@
+     "winedebug = -all\n"
+     "env = PW_NATIVE_ALERT_UMTX=1\n"
+     "env = DXVK_PS4_NATIVE=menu\n"
+-    "env = PW_SERVER_PRIO=699\n";
++    "env = PW_SERVER_PRIO=699\n"
++    "env = DXVK_PS4_NET_CACHE=3\n";
+ static PwGameProfile direct_profile;
+ static PwWineApp direct_app;
+-static int direct_single(int maintenance, int fixed) { return !maintenance || fixed; }
+-static int direct_init(PwWineLaunch *out)
++/* The launcher's profile has no prefix line (the title owns the prefix), but
++ * the profile parser requires one: "prefix = default" is added right after
++ * "[application]" unless a prefix line is there. 0 ok, -1 does not fit. */
++static int direct_profile_with_prefix(const char *text, char *out, size_t cap)
++{
++    static const char section[] = "[application]\n", line[] = "prefix = default\n";
++    const char *at = strstr(text, section);
++    size_t n = strlen(text);
++    if (!at || strstr(text, "\nprefix =") || strstr(text, "\nprefix=")) {
++        if (n >= cap) return -1;
++        memcpy(out, text, n + 1);
++        return 0;
++    }
++    size_t head = (size_t)(at - text) + sizeof(section) - 1;
++    if (n + sizeof(line) > cap) return -1;
++    memcpy(out, text, head);
++    memcpy(out + head, line, sizeof(line) - 1);
++    memcpy(out + head + sizeof(line) - 1, text + head, n - head + 1);
++    return 0;
++}
++
++/* text: the launcher's profile, or NULL/"" for the built-in one. */
++static int direct_init(PwWineLaunch *out, const char *text)
+ {
+-    char *args[] = { "profile=blur-direct", NULL };
+-    if (pw_game_profile_parse((const uint8_t *)direct_profile_text,
+-                              sizeof(direct_profile_text) - 1, &direct_profile) != PW_OK)
++    static char arg[16 + PW_APP_ID_CAPACITY];
++    static char with_prefix[sizeof(((BlDecision *)0)->profile_text) + 32];
++    char *args[] = { arg, NULL };
++    int parsed = text && text[0] &&
++                 direct_profile_with_prefix(text, with_prefix, sizeof(with_prefix)) == 0 &&
++                 pw_game_profile_parse((const uint8_t *)with_prefix, strlen(with_prefix),
++                                       &direct_profile) == PW_OK;
++    PS5LOG_LOG("PW_WINE64 profile source=%s", parsed ? "launcher" : "built-in");
++    if (!parsed && pw_game_profile_parse((const uint8_t *)direct_profile_text,
++                                         sizeof(direct_profile_text) - 1, &direct_profile) != PW_OK)
+         return -1;
+     direct_app = (PwWineApp){ direct_profile.app.id, direct_profile.app.name,
+                               "", direct_profile.app.executable };
++    snprintf(arg, sizeof(arg), "profile=%s", direct_profile.app.id);
+     if (pw_wine_launch_parse(1, args, &direct_app, 1, out) != 0 ||
+         out->mode != PW_WINE_LAUNCH_GAME || out->app != &direct_app)
+         return -1;
+     return 0;
+ }
+ /* N276_POLICY_END */
+-static int single_program(void) { return direct_single(direct_maintenance, fixed_profile[0] != '\0'); }
+ 
+ /* Where the title's Wine runtime can be seen: /app0 inside the sandbox;
+  * once /data is granted the process sees the real root, where /app0 does
+@@ -165,175 +194,28 @@
+ #define PW_WINE64_PE_RUNTIME "/win/wine/lib/wine/x86_64-windows"
+ #define PW_SANDBOX_APP0 "/mnt/sandbox/" PW_TITLE_ID "_000/app0"
+ static const char *const runtime_roots[] = { "/app0", PW_SANDBOX_APP0 };
+-/* The title's data: profiles/, input/, prefix/ and prefixes/<name>. */
+-#ifndef PW_WINE64_ROOT_DATA
+-#define PW_WINE64_ROOT_DATA "/data/prospero-win"            /* when /data is granted */
+-#endif
++/* The title's data (launcher/src/bl_paths.h): <JkFlow>/System (backup/
++ * prefix/ cache/ state/ import/) and <JkFlow>/Logs (session logs, support/),
++ * <JkFlow> = /data/JkFlow in the player's letter case (blur_find_roots). */
+ #ifndef PW_WINE64_ROOT_SANDBOX
+-#define PW_WINE64_ROOT_SANDBOX "/download0/prospero-win"    /* sandbox fallback */
++#define PW_WINE64_ROOT_SANDBOX "/download0/JkFlow/System"   /* sandbox fallback */
+ #endif
++#define PW_WINE64_LOGS_SANDBOX "/download0/JkFlow/Logs"
++#define PW_WINE64_GAME_DIR "/data/JkFlow/Blur"
+ #ifndef PW_WINE64_DEBUG
+ /* No +seh: WoW64 callback returns unwind with 80000026 many times a second
+  * and would flood the sink. */
+ #define PW_WINE64_DEBUG "err+all,+loaddll,+process"
+ #endif
+-#ifndef PW_WINE64_SECONDS
+-/* A game closes itself this long after it started; 0 lets it run until it
+- * is closed. Pinball presents its first frame about 31 s in (run 13). */
+-#define PW_WINE64_SECONDS 0
+-#endif
+-#ifndef PW_WINE64_WAIT_WATCHDOG
+-/* 1 turns on Wine's wait watchdog (patch 0680): a snapshot of what every
+- * thread waits on every two seconds, for stalls that logging hides. */
+-#define PW_WINE64_WAIT_WATCHDOG 0
+-#endif
+-#ifndef PW_WINE64_HEAP_FLEXIBLE
+-/* A/B control: keep Wine's Unix heap on its existing anonymous mmap backing
+- * instead of PS4 direct memory. Restored 2026-10-28 -- the upstream sync left
+- * build-relocatable-wine-ps4.sh validating and passing -D for this and for
+- * PW_WINE64_SERVER_DIRECT_OFF while no source read either, so both switches
+- * looked wired and did nothing. */
+-#define PW_WINE64_HEAP_FLEXIBLE 0
+-#endif
+-#ifndef PW_WINE64_SERVER_DIRECT_OFF
+-/* A/B control: route Wine server requests through the ordinary server thread
+- * rather than the direct path, leaving the CPU backend and game data alone. */
+-#define PW_WINE64_SERVER_DIRECT_OFF 0
+-#endif
+-#ifndef PW_WINE64_SCRIPT
+-/* 1 drives the launcher unattended for validation: it opens
+- * PW_WINE64_SCRIPT_CYCLES games, one per cycle in the library's order
+- * (starting again after the last), each closed by the deadline above. */
+-#define PW_WINE64_SCRIPT 0
+-#endif
+-#ifndef PW_WINE64_SCRIPT_CYCLES
+-#define PW_WINE64_SCRIPT_CYCLES 2
+-#endif
+ 
+-#if PW_WINE64_SCRIPT
+-/* Unattended runs may also press keys in the game, from <root>/pw_script_keys:
+- * one "<milliseconds after the game starts> <virtual-key code>" per line, for
+- * instance "45000 0x0d" for ENTER. Each is posted as a press and release. */
+-#define PW_WINE64_SCRIPT_KEYS_MAX 64
+-static struct { uint64_t at_ns; uint32_t vk; } script_keys[PW_WINE64_SCRIPT_KEYS_MAX];
+-static size_t script_key_count, script_key_next;
+-
+-static void script_keys_load(const char *root)
+-{
+-    char path[512];
+-    FILE *file;
+-    unsigned long ms, vk;
+-
+-    script_key_count = script_key_next = 0;
+-    snprintf(path, sizeof(path), "%s/pw_script_keys", root);
+-    if (!(file = fopen(path, "r"))) return;
+-    while (script_key_count < PW_WINE64_SCRIPT_KEYS_MAX && fscanf(file, "%lu %li", &ms, (long *)&vk) == 2) {
+-        script_keys[script_key_count].at_ns = (uint64_t)ms * 1000000u;
+-        script_keys[script_key_count].vk = (uint32_t)vk;
+-        script_key_count++;
+-    }
+-    fclose(file);
+-    PS5LOG_LOG("PW_WINE64 script keys=%u", (unsigned)script_key_count);
+-}
+-
+-/* A recorded macro (src/pw_script_input.h) from <root>/pw_script_input,
+- * replayed through the path a USB keyboard and mouse take. */
+-static PwScriptInput script_input;
+-static size_t script_input_next;
+-/* What its pad and stick events hold: the game's XInput controller 0 adds
+- * it to the DualSense's state every frame (xinput mode only). */
+-static PwScriptPad script_pad;
+-static uint64_t script_input_start_ns; /* 0 until its sync text appeared */
+-static PwScriptInputSync script_input_sync;
+-static long script_input_sync_offset;
+-static char script_input_sync_file[768];
+-
+-static void script_input_load(const char *root)
+-{
+-    char path[512];
+-    FILE *file;
+-    long length = -1;
+-    char *text = MAP_FAILED;
+-    size_t bad = 0, capacity = 0, text_bytes = 0, storage_bytes = 0;
+-    PwScriptInputEvent *storage = MAP_FAILED;
+-    int status = PW_ERR_TRUNCATED; /* read short */
+-
+-    memset(&script_input, 0, sizeof(script_input));
+-    memset(&script_pad, 0, sizeof(script_pad));
+-    script_input_next = 0;
+-    script_input_start_ns = 0;
+-    snprintf(path, sizeof(path), "%s/pw_script_input", root);
+-    if (!(file = fopen(path, "rb"))) return;
+-    /* The title's heap is small: the text and the events get pages of their own. */
+-    if (!fseek(file, 0, SEEK_END) && (length = ftell(file)) > 0 && !fseek(file, 0, SEEK_SET)) {
+-        text_bytes = (size_t)length;
+-        text = mmap(NULL, text_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+-        if (text != MAP_FAILED && fread(text, 1, text_bytes, file) == text_bytes) {
+-            capacity = pw_script_input_lines(text, text_bytes);
+-            storage_bytes = capacity * sizeof(*storage);
+-            storage = mmap(NULL, storage_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+-            status = storage == MAP_FAILED ? PW_ERR_VM :
+-                     pw_script_input_parse(text, text_bytes, storage, capacity, &script_input, &bad);
+-        }
+-    }
+-    fclose(file);
+-    if (text != MAP_FAILED) munmap(text, text_bytes);
+-    if (status != PW_OK && storage != MAP_FAILED) {
+-        munmap(storage, storage_bytes);
+-        memset(&script_input, 0, sizeof(script_input));
+-    }
+-    if (script_input.sync_path[0]) {
+-        snprintf(script_input_sync_file, sizeof(script_input_sync_file), "%s/%s", root, script_input.sync_path);
+-        script_input_sync = (PwScriptInputSync){ script_input.sync_text, 0 };
+-        /* Only what the file gains from now on: a game's log may keep
+-         * earlier sessions (Source's -condebug appends). */
+-        script_input_sync_offset = 0;
+-        if ((file = fopen(script_input_sync_file, "rb"))) {
+-            if (!fseek(file, 0, SEEK_END)) script_input_sync_offset = ftell(file);
+-            if (script_input_sync_offset < 0) script_input_sync_offset = 0;
+-            fclose(file);
+-        }
+-    }
+-    PS5LOG_LOG("PW_WINE64 script input status=%s events=%u bad_line=%u sync=%s pad_events=%u",
+-               pw_result_name(status), (unsigned)script_input.count, (unsigned)bad,
+-               script_input.sync_path[0] ? script_input.sync_path : "-", (unsigned)script_input.pad_events);
+-}
+-
+-/* With a sync line, reads what the file gained since the last look; the
+- * replay's clock starts once the text appeared. */
+-static void script_input_poll_sync(uint64_t now)
+-{
+-    char chunk[4096];
+-    size_t got;
+-    FILE *file;
+-
+-    if (script_input_start_ns || !script_input.count) return;
+-    if (!script_input.sync_path[0]) {
+-        script_input_start_ns = now;
+-        return;
+-    }
+-    if (!(file = fopen(script_input_sync_file, "rb"))) return;
+-    if (!fseek(file, script_input_sync_offset, SEEK_SET)) {
+-        while ((got = fread(chunk, 1, sizeof(chunk), file)) > 0) {
+-            script_input_sync_offset += (long)got;
+-            if (pw_script_input_sync_feed(&script_input_sync, chunk, got)) {
+-                script_input_start_ns = now;
+-                PS5LOG_LOG("PW_WINE64 script input synced at offset=%ld", script_input_sync_offset);
+-                break;
+-            }
+-        }
+-    }
+-    fclose(file);
+-}
+-#endif
+-
+-/* The games, from <root>/profiles (native/pw_wine_library.h); nothing is
+- * built in. catalog holds the valid ones for pw_wine_launch. */
+-static PwWineLibrary library;
+-static PwWineApp catalog[PW_WINE_LIBRARY_MAX];
+-static char catalog_detail[PW_WINE_LIBRARY_MAX][64];
+-static size_t catalog_count;
++/* The BLUR data root once /data is granted (no profiles/ library in BLUR). */
+ static const char *library_root = PW_WINE64_ROOT_SANDBOX;
++/* Where session logs go: <JkFlow>/Logs once /data is granted. */
++static const char *logs_root = PW_WINE64_LOGS_SANDBOX;
++static char data_root_found[160], logs_root_found[160];
++/* Blur showed its first frame (loading_done): only then is an exit a
++ * normal end for the launcher's session record (bl_session.h). */
++static int blur_first_frame;
+ 
+ /* The largest desktop shown: Wine's PS5 driver defaults to 800x600
+  * (WINE_PS5_DESKTOP overrides, 1920x1080 for Warcraft III); bigger frames
+@@ -352,7 +234,6 @@
+ static const PwPadKeyMap pad_open_map[] = { { PAD_CROSS, 0x20, 0, 0, "cross" } };
+ 
+ 
+-int sceSystemServiceLoadExec(const char *path, char *const argv[]);
+ int32_t sceSystemServiceGetAppIdOfBigApp(void);
+ int32_t sceKernelGetAppInfo(pid_t pid, OrbisAppInfo *info);
+ int32_t sceSystemServiceKillApp(uint32_t app_id, int32_t opt, int32_t method, int32_t reason);
+@@ -611,6 +492,7 @@
+     loading->content = 1;
+     bl_loader_release();
+     bl_session_first_frame();          /* launcher session record: the game reached its first frame */
++    blur_first_frame = 1;
+     PS5LOG_LOG("PW_WINE64 loading done by=%s spinner_steps=%u", by, loading->step);
+ }
+ 
+@@ -787,42 +669,215 @@
+     _exit(0);
+ }
+ 
+-/* Replace this process with the title again: app's game, or the launcher
+- * when app is NULL. /app0 is not visible once /data is granted, so the
+- * sandbox's view of the same eboot is tried next. Returns only on failure.
+- * A single-program title has no launcher to go to: it closes itself for the
+- * console's home instead (leave_to_home). */
++/* ---- blur100 section: back to the launcher, data roots, module-load
++ * reports (launcher/integration/blur100/tests/test_title_r4.c) ---- */
++
++int sceSystemServiceLoadExec(const char *path, char *const argv[]);
++int sceKernelStopUnloadModule(int32_t handle, size_t argc, const void *argv, uint32_t flags,
++                              const void *option, int *result);
++
++/* Owner decision 2026-11-15 (finding 10): after Blur exits, go back to the
++ * launcher, never crash. A title that ends itself (_exit) is reported by
++ * the console as an error, and on PS4 the system will not close a title
++ * for it (GetAppIdOfBigApp fails), so the title replaces itself with its own
++ * eboot, which opens the launcher again (the bench's path, every quit on
++ * this console). /app0 is not visible once /data is granted, so the
++ * sandbox's view of the same eboot is tried next. Only if neither starts
++ * does it close to Home. Does not return. */
+ static void restart_title(const PwWineApp *app, uint32_t cycle, const char *reason)
+ {
+     static const char *const eboots[] = { "/app0/eboot.bin", PW_SANDBOX_APP0 "/eboot.bin" };
+     static char storage[2 * PW_WINE_LAUNCH_PATH_MAX + 64];
+     char *next[PW_WINE_LAUNCH_ARGS];
+ 
+-    if (!app && single_program()) {
+-        PS5LOG_LOG("PW_WINE64 leave to=home cycle=%u reason=%s", (unsigned)cycle, reason);
+-        leave_to_home(reason);
+-    }
+-
+-    if (!pw_wine_launch_argv(app, cycle, storage, sizeof(storage), next, PW_WINE_LAUNCH_ARGS)) {
++    (void)app;
++    if (!pw_wine_launch_argv(NULL, cycle, storage, sizeof(storage), next, PW_WINE_LAUNCH_ARGS)) {
+         PS5LOG_LOG("PW_WINE64 restart refused: arguments do not fit");
++        leave_to_home(reason);
+         return;
+     }
+     display_quiesce(reason);
+     for (size_t i = 0; i < sizeof(eboots) / sizeof(eboots[0]); i++) {
+-        PS5LOG_LOG("PW_WINE64 restart to=%s cycle=%u reason=%s eboot=%s", app ? app->id : "launcher",
+-                   (unsigned)cycle, reason, eboots[i]);
++        PS5LOG_LOG("PW_WINE64 restart to=launcher cycle=%u reason=%s eboot=%s", (unsigned)cycle, reason,
++                   eboots[i]);
+         pw_diagnostics_close(reason);
+         int rc = sceSystemServiceLoadExec(eboots[i], next);
+         pw_diagnostics_resume();
+         PS5LOG_LOG("PW_WINE64 restart failed rc=0x%08x", (unsigned)rc);
+     }
++    PS5LOG_LOG("PW_WINE64 leave to=home cycle=%u reason=%s", (unsigned)cycle, reason);
++    leave_to_home(reason);
++}
++
++/* The launcher's session record ends cleanly only after Blur showed its
++ * first frame: a start that dies before it (WS2_32 refused, finding 13)
++ * still gets the failed-start screen (E101) at the next launcher open. */
++static void blur_session_end(void)
++{
++    if (blur_first_frame) bl_session_end_clean();
++}
++
++static void blur_migrate_log(void *context, const char *line)
++{
++    (void)context;
++    PS5LOG_LOG("PW_WINE64 %s", line);
++}
++
++/* Review finding 1: the old data could not all be moved. The title then
++ * makes no fresh System data (no prefix import, no launcher state): it shows
++ * blur_migrate_text and closes (blur_launcher_screen). */
++static int blur_migrate_blocked;
++static char blur_migrate_text[400];
++
++/* 1 when dir holds an entry named name in any letter case; found (may be
++ * NULL) then gets dir/<that spelling>. */
++static int blur_dir_has_ci(const char *dir, const char *name, char *found, size_t cap)
++{
++    DIR *d = opendir(dir);
++    struct dirent *e;
++    int hit = 0;
++
++    if (!d) return 0;
++    while (!hit && (e = readdir(d)) != NULL)
++        if (!strcasecmp(e->d_name, name)) {
++            hit = 1;
++            if (found && snprintf(found, cap, "%s/%s", dir, e->d_name) >= (int)cap) hit = -1;
++        }
++    closedir(d);
++    return hit;
++}
++
++/* 1 when dir is a folder with no entry. */
++static int blur_dir_empty(const char *dir)
++{
++    DIR *d = opendir(dir);
++    struct dirent *e;
++    int empty = 1;
++
++    if (!d) return 0;
++    while (empty && (e = readdir(d)) != NULL)
++        if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) empty = 0;
++    closedir(d);
++    return empty;
++}
++
++/* Owner decision 2026-11-16: an old <data>/BLUR that holds Blur.exe directly
++ * (any letter case) is a GAME folder, not 1.00 test-build data. When
++ * <JkFlow>/BLUR (any letter case) is missing or empty it becomes that folder
++ * in one rename; when a game is already there nothing moves. It is never
++ * merged into System. 1: a game folder (handled here), 0: not one, the
++ * System migration applies. The launcher (bl_paths.c) has the same rule. */
++static int blur_migrate_game(const char *old, const char *jkflow)
++{
++    char target[192];
++    int there;
++
++    if (blur_dir_has_ci(old, "Blur.exe", NULL, 0) != 1) return 0;
++    there = blur_dir_has_ci(jkflow, "BLUR", target, sizeof(target));
++    if (there == 0 && snprintf(target, sizeof(target), "%s/BLUR", jkflow) >= (int)sizeof(target)) there = -1;
++    if (there < 0) {
++        PS5LOG_LOG("PW_WINE64 migrate: %s kept (path too long)", old);
++        return 1;
++    }
++    if (there == 1 && !blur_dir_empty(target)) {
++        PS5LOG_LOG("PW_WINE64 migrate: %s kept (game already present)", old);
++        return 1;
++    }
++    if (rename(old, target) != 0) {
++        PS5LOG_LOG("PW_WINE64 migrate: %s kept (game folder not moved errno=%d)", old, errno);
++        return 1;
++    }
++    PS5LOG_LOG("PW_WINE64 migrate: %s is a game folder -> JkFlow/BLUR", old);
++    return 1;
++}
++
++/* Findings 4+5: the JkFlow folder in data, found in any letter case before
++ * anything is made (JkFlow is created only when there is none), an old
++ * <data>/BLUR moved in once, then <JkFlow>/System and <JkFlow>/Logs made and
++ * the launcher's default root set to the same System. 0 ok, 1 blocked: old
++ * data is still in <data>/BLUR after a failed move (nothing else made, the
++ * next start tries again), -1 failed. */
++static int blur_find_roots(const char *data, char *sys, size_t sys_cap, char *logs, size_t logs_cap)
++{
++    char jkflow[128], old[128];
++    BlPaths paths;
++    int found = bl_jkflow_dir(data, jkflow, sizeof(jkflow), 1), moved;
++
++    if (found < 0 || snprintf(sys, sys_cap, "%s/System", jkflow) >= (int)sys_cap ||
++        snprintf(logs, logs_cap, "%s/Logs", jkflow) >= (int)logs_cap ||
++        snprintf(old, sizeof(old), "%s/BLUR", data) >= (int)sizeof(old))
++        return -1;
++    bl_paths_init(&paths, sys);
++    if (!paths.root[0]) return -1;
++    moved = blur_migrate_game(old, jkflow) ? 0 : bl_paths_migrate(old, &paths, blur_migrate_log, NULL);
++    if (moved < 0 && bl_paths_pending(old)) {
++        blur_migrate_blocked = 1;
++        snprintf(blur_migrate_text, sizeof(blur_migrate_text), bl_str(BL_S_MIGRATE_FAILED), old, sys);
++        PS5LOG_LOG("PW_WINE64 data root blocked: %s still holds data that could not be moved to %s", old, sys);
++        return 1;
++    }
++    /* 0777: the folders are read over FTP by a server that is not the title. */
++    (void)chmod(jkflow, 0777);
++    if (mkdir(sys, 0777) != 0 && errno != EEXIST) return -1;
++    if (mkdir(logs, 0777) != 0 && errno != EEXIST) return -1;
++    (void)chmod(sys, 0777);
++    (void)chmod(logs, 0777);
++    bl_paths_set_default_root(sys);
++    PS5LOG_LOG("PW_WINE64 data root=%s logs=%s jkflow=%s migrated=%d", sys, logs,
++               found ? "found" : "created", moved);
++    return 0;
++}
++
++/* Finding 13: a Unix module (ws2_32.prx, libvulkan.prx) the console refuses
++ * stops Blur before its first frame, and ntdll's loader reports it only on
++ * stderr, which is closed on PS4. The title gives that loader the same three
++ * kernel calls it uses itself, plus a report into the session log: the path,
++ * the kernel's handle and the module's result for each refusal, and the
++ * loader's own "cannot open ..., tried ..." line. */
++static int32_t blur_dl_load_start(const char *path, size_t argc, const void *argv, uint32_t flags,
++                                  const void *option, int *result)
++{
++    int32_t handle = sceKernelLoadStartModule(path, argc, argv, flags, option, result);
++    if (handle < 0)
++        PS5LOG_LOG("PW_WINE64 module load refused path=%s handle=0x%08x result=0x%08x", path ? path : "-",
++                   (unsigned)handle, (unsigned)(result ? *result : 0));
++    return handle;
++}
++
++static int blur_dl_module_info(int32_t handle, void *info)
++{
++    return sceKernelGetModuleInfo(handle, info);
++}
++
++static int blur_dl_stop_unload(int32_t handle, size_t argc, const void *argv, uint32_t flags,
++                               const void *option, int *result)
++{
++    return sceKernelStopUnloadModule(handle, argc, argv, flags, option, result);
+ }
+ 
++static void blur_dl_report(const char *line)
++{
++    PS5LOG_LOG("PW_WINE64 %s", line);
++}
++
++/* configure: ntdll's exported pw_wine_dl_configure. prx_dir: WINE_PRX_DIR,
++ * else ntdll's own default. 1 when installed. */
++static int blur_install_dl_report(void (*configure)(const PwWineDlOps *, const char *), const char *prx_dir)
++{
++    const PwWineDlOps ops = { blur_dl_load_start, blur_dl_module_info, blur_dl_stop_unload, blur_dl_report };
++
++    if (!configure) return 0;
++    configure(&ops, prx_dir && prx_dir[0] ? prx_dir : "/app0/sce_module");
++    return 1;
++}
++
++/* ---- end blur100 section ---- */
++
+ /* Wine ends the process with exit() when its last program ends: go back to
+  * the launcher. */
+ static void on_exit_report(void)
+ {
+-    bl_session_end_clean();            /* launcher session record: a normal end */
++    blur_session_end();                /* launcher session record: a normal end after the first frame */
+     PS5LOG_LOG("PW_WINE64 exit sink_calls=%lu", sink_calls);
+     restart_title(NULL, launch.cycle + 1u, "wine-exit");
+     pw_diagnostics_close("wine64-exit");
+@@ -840,7 +895,7 @@
+     return 1;
+ }
+ 
+-/* ---- library ------------------------------------------------------------ */
++/* ---- data --------------------------------------------------------------- */
+ 
+ /* Complete the one-shot helper exchange before loading profiles or starting
+  * Wine. A failed or incomplete request closes this process to Home. */
+@@ -850,80 +905,26 @@
+     int status;
+ 
+     status = pw_data_mount_request(&mount);
+-    if (status == 0) library_root = PW_WINE64_ROOT_DATA;
+-#ifdef __PS4__
+-    /* ⚠ THE LOG SWITCH FOR PACKAGES WITHOUT /app0/dev.conf. ps5log reads its
+-     * destination at the top of main(), before this grant, when only the
+-     * package's own dev.conf is readable. A release package ships none, so it
+-     * logs nowhere -- unless a dev.conf has been put on the console: copy one
+-     * to /data/prospero-win/dev.conf to turn the app log on, delete it to turn
+-     * it off. Only the lines before this point are missed (2026-11-06). */
+-    if (status == 0 && !ps5log_enabled()) {
+-        static const char *const late_paths[] = {
+-            "/data/prospero-win/dev.conf",
+-            "/data/homebrew/dev.conf",
+-        };
+-        ps5log_config late_config;
+-        const char *used = NULL;
+-
+-        ps5log_config_defaults(&late_config);
+-        if (ps5log_load_config(late_paths, sizeof(late_paths) / sizeof(late_paths[0]),
+-                               &late_config, &used) == 0 &&
+-            ps5log_init(&late_config, PW_TITLE_ID, PW_APP_NAME, now_ns()) == 0)
+-            PS5LOG_LOG("PW_WINE64 log enabled by %s after the /data grant", used ? used : "?");
++    if (status == 0) {
++        int roots = blur_find_roots("/data", data_root_found, sizeof(data_root_found), logs_root_found,
++                                    sizeof(logs_root_found));
++        if (roots < 0) {
++            PS5LOG_LOG("PW_WINE64 data roots could not be prepared under /data");
++            return -1;
++        }
++        /* Blocked (roots 1): the sandbox roots stay; nothing is written before
++         * blur_launcher_screen shows why and closes. */
++        if (roots == 0) {
++            library_root = data_root_found;
++            logs_root = logs_root_found;
++        }
+     }
+-#endif
+     PS5LOG_LOG("PW_WINE64 data_mount data_before=%d elevated_before=%d helper_completed=%d "
+                "helper_errno=%d data_after=%d elevated_after=%d waited_ms=%d settled_ms=%d root=%s",
+                mount.data_before, mount.elevated_before, mount.helper_completed,
+                mount.helper_errno, mount.data_after, mount.elevated_after, mount.waited_ms,
+                mount.settled_ms, status == 0 ? library_root : "unavailable");
+     if (status != 0) return -1;
+-    {   /* Blur saves live in the prefix the seed import below may refresh:
+-         * back them up first (bl_saves.h; skipped when nothing changed). */
+-        int saves = bl_saves_backup(library_root, BL_SAVES_PREFIX_DEFAULT);
+-        PS5LOG_LOG("PW_WINE64 saves backup before seed import result=%d", saves);
+-    }
+-    {   /* Task 245: import the package's hash-pinned Blur seed into the library
+-         * root before profiles are read (native245_seed.h). Every outcome is
+-         * logged; none stops the launcher, and a refusal leaves /data untouched. */
+-        N245Result seed;
+-        uint64_t seed_started = now_ns();
+-        N245Status seed_status = n245_seed_import(runtime_roots, sizeof(runtime_roots) / sizeof(runtime_roots[0]),
+-                                                  library_root, n245_seed_pinned_end(), &seed);
+-        PS5LOG_LOG("PW_WINE64 seed245 status=%s files=%u copied=%u kept=%u bytes=%llu ms=%llu "
+-                   "seed_root=%s detail=%s", n245_status_name(seed_status), seed.files_total, seed.copied,
+-                   seed.kept, seed.bytes_copied, (unsigned long long)((now_ns() - seed_started) / 1000000u),
+-                   seed.seed_root[0] ? seed.seed_root : "-", seed.detail[0] ? seed.detail : "-");
+-    }
+-    status = pw_wine_library_load(&library, library_root);
+-    catalog_count = 0;
+-    for (uint32_t i = 0; i < library.count; i++) {
+-        const PwWineLibraryEntry *entry = &library.entries[i];
+-        if (entry->status != PW_OK) {
+-            PS5LOG_LOG("PW_WINE64 profile refused file=%s status=%s", entry->file,
+-                       pw_result_name(entry->status));
+-            continue;
+-        }
+-        const PwGameProfile *game = &entry->profile;
+-        if (game->display.width)
+-            snprintf(catalog_detail[catalog_count], sizeof(catalog_detail[0]), "%s  %s  %ux%u",
+-                     game->app.architecture == PW_APP_ARCH_PE64 ? "pe64" : "pe32",
+-                     game->app.graphics == PW_APP_GRAPHICS_DXVK ? "dxvk" :
+-                     game->app.graphics == PW_APP_GRAPHICS_ZINK ? "opengl" : "gdi",
+-                     (unsigned)game->display.width, (unsigned)game->display.height);
+-        else
+-            snprintf(catalog_detail[catalog_count], sizeof(catalog_detail[0]), "%s  %s",
+-                     game->app.architecture == PW_APP_ARCH_PE64 ? "pe64" : "pe32",
+-                     game->app.graphics == PW_APP_GRAPHICS_DXVK ? "dxvk" :
+-                     game->app.graphics == PW_APP_GRAPHICS_ZINK ? "opengl" : "gdi");
+-        catalog[catalog_count] = (PwWineApp){ game->app.id, game->app.name,
+-                                              catalog_detail[catalog_count], game->app.executable };
+-        catalog_count++;
+-    }
+-    PS5LOG_LOG("PW_WINE64 library status=%s listed_by=%d scan_errno=%d entries=%u games=%u "
+-                   "root=%s", pw_result_name(status), library.listed_by, library.scan_error,
+-               (unsigned)library.count, (unsigned)catalog_count, library_root);
+     return 0;
+ }
+ 
+@@ -950,133 +951,6 @@
+            (unsigned long long)(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000u;
+ }
+ 
+-/* ---- launcher ----------------------------------------------------------- */
+-
+-/* Shown until a game is chosen; Wine is not loaded. Does not return. */
+-static void run_launcher(void)
+-{
+-    PwRemoteControl remote;
+-    pw_rc_init(&remote, library_root, "launcher", "", now_ns());
+-    static PwVideoOutPs5 video;
+-    static PwPadPs5 pad;
+-    PwPadPs5Ops pad_ops;
+-    PwLauncherItem items[PW_WINE_LIBRARY_MAX];
+-    const size_t frame_bytes = (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4u;
+-    uint8_t *frame = mmap(NULL, frame_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+-    PwLauncherScene scene = { items, 0, PW_LAUNCHER_RENDER_NONE,
+-        launch.refused ? "THAT GAME IS NOT IN THE LIBRARY" :
+-        !catalog_count ? "ADD PROFILES TO THE PROFILES FOLDER" :
+-        launch.cycle ? "WELCOME BACK" : "CHOOSE A GAME" };
+-    static PwHidPs5 hid;
+-    int video_status = pw_videoout_ps5_open(&video), pad_status = pw_pad_ps5_platform_ops(&pad_ops);
+-    int hid_status, dirty = 1, chosen = -1;
+-
+-    if (pad_status == PW_OK)
+-        pad_status = pw_pad_ps5_open(&pad, &pad_ops, pad_open_map,
+-                                     sizeof(pad_open_map) / sizeof(pad_open_map[0]));
+-    /* A USB keyboard works the launcher too, the pad's user's or else the
+-     * foreground user's, as in a game. */
+-    {
+-        int32_t user = pad_status == PW_OK ? pad.user_id : -1;
+-        if (user < 0 && pw_pad_ps5_platform_ops(&pad_ops) == PW_OK) {
+-            (void)pad_ops.user_initialize(NULL);
+-            (void)pad_ops.foreground_user(&user);
+-        }
+-        hid_status = pw_hid_ps5_open(&hid, pw_hid_ps5_system_ops(hid_log), user);
+-    }
+-    /* The games, then the refused profiles, listed by file as not available. */
+-    for (size_t i = 0; i < catalog_count; i++)
+-        items[scene.count++] = (PwLauncherItem){ catalog[i].name, catalog[i].detail, 1 };
+-    for (uint32_t i = 0; i < library.count; i++)
+-        if (library.entries[i].status != PW_OK)
+-            items[scene.count++] = (PwLauncherItem){ library.entries[i].file, "profile refused", 0 };
+-    if (scene.count) scene.selected = 0;
+-    PS5LOG_LOG("PW_WINE64 launcher video=%s pad=%s hid=%s frame=%d apps=%u cycle=%u refused=%u script=%d",
+-               pw_result_name(video_status), pw_result_name(pad_status), pw_result_name(hid_status),
+-               frame != MAP_FAILED,
+-               (unsigned)catalog_count, (unsigned)launch.cycle, launch.refused, PW_WINE64_SCRIPT);
+-    char log_status[80], report_path[96];
+-    snprintf(report_path, sizeof(report_path), "LOGS: BLUR LAUNCHER > SETTINGS > SUPPORT > SAVE SUPPORT BUNDLE");
+-    int report_help = 0;
+-    pw_diagnostics_status(log_status, sizeof(log_status));
+-    scene.status = log_status;
+-    for (uint64_t tick = 1; chosen < 0; tick++) {
+-        pw_diagnostics_tick(now_ns());
+-        int remote_action = pw_rc_poll(&remote, now_ns());
+-        if (remote_action == PW_RC_LAUNCH) {
+-            int found = -1;
+-            for (size_t i = 0; i < catalog_count; i++)
+-                if (!strcmp(catalog[i].id, remote.target)) { found = (int)i; break; }
+-            if (pw_rc_ack(&remote, found >= 0 ? "accepted" : "unknown_profile") && found >= 0) {
+-                chosen = found;
+-                PS5LOG_LOG("PW_CONTROL session=%s seq=%u launch=%s accepted=1", remote.session, remote.seq, remote.target);
+-                break;
+-            }
+-        } else if (remote_action == PW_RC_RELEASE) (void)pw_rc_ack(&remote, "accepted");
+-        if (tick % PW_WINE64_TICKS_PER_S == 0 && !report_help) {
+-            pw_diagnostics_status(log_status, sizeof(log_status)); dirty = 1;
+-        }
+-        uint32_t before = scene.selected;
+-        if (pad_status == PW_OK && pw_pad_ps5_read(&pad) == PW_OK) {
+-            static const struct { uint32_t button; PwLauncherAction action; } pad_actions[] = {
+-                { PAD_RIGHT, PW_LAUNCHER_ACTION_RIGHT }, { PAD_LEFT, PW_LAUNCHER_ACTION_LEFT },
+-                { PAD_DOWN, PW_LAUNCHER_ACTION_DOWN }, { PAD_UP, PW_LAUNCHER_ACTION_UP },
+-                { PAD_CROSS, PW_LAUNCHER_ACTION_CHOOSE },
+-            };
+-            if (pad.core.pressed_edges & PAD_OPTIONS) {
+-                report_help = !report_help;
+-                scene.status = report_help ? report_path : log_status;
+-                dirty = 1;
+-            }
+-            for (size_t i = 0; i < sizeof(pad_actions) / sizeof(pad_actions[0]); i++)
+-                if ((pad.core.pressed_edges & pad_actions[i].button) &&
+-                    pw_launcher_navigate(&scene, pad_actions[i].action, (uint32_t)catalog_count))
+-                    chosen = (int)scene.selected;
+-        }
+-        /* Key presses; a keyboard plugged in later is found every few seconds. */
+-        if (hid.ops.load_module) {
+-            PwHidPs5Poll poll;
+-
+-            if (hid_status != PW_OK && tick % (5 * PW_WINE64_TICKS_PER_S) == 0)
+-                hid_status = pw_hid_ps5_retry(&hid);
+-            pw_hid_ps5_poll(&hid, &poll);
+-            for (size_t i = 0; i < poll.count && chosen < 0; i++)
+-                if (poll.events[i].kind == PW_HID_EVENT_KEY && poll.events[i].down &&
+-                    pw_launcher_navigate(&scene, pw_launcher_key_action(poll.events[i].code),
+-                                         (uint32_t)catalog_count))
+-                    chosen = (int)scene.selected;
+-        }
+-        dirty |= scene.selected != before;
+-        if (PW_WINE64_SCRIPT && tick == 3 * PW_WINE64_TICKS_PER_S) {
+-            if (launch.cycle >= PW_WINE64_SCRIPT_CYCLES) {
+-                PS5LOG_LOG("PW_WINE64 launcher script done cycles=%u", (unsigned)launch.cycle);
+-                pw_diagnostics_close("wine64-script-done");
+-                _exit(0);
+-            }
+-            /* One game per cycle, in the library's order. */
+-            if (catalog_count) chosen = (int)(launch.cycle % catalog_count);
+-        }
+-        if (dirty && video_status == PW_OK && frame != MAP_FAILED) {
+-            const PwPresentTarget target = { frame, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
+-                                             PW_LAUNCHER_RENDER_WIDTH * 4u, frame_bytes };
+-            const PwPresentView view = { frame, target.width, target.height, target.stride,
+-                                           (uint32_t)frame_bytes };
+-            int status = pw_launcher_render(&scene, &target);
+-            if (status == PW_OK) status = pw_videoout_ps5_present(&video, &view);
+-            if (status != PW_OK) PS5LOG_LOG("PW_WINE64 launcher present=%s", pw_result_name(status));
+-            dirty = 0;
+-        } else {
+-            usleep(PW_WINE64_TICK_US);
+-        }
+-    }
+-    PS5LOG_LOG("PW_WINE64 launcher chose=%s", catalog[chosen].id);
+-    if (pad_status == PW_OK) (void)pw_pad_ps5_close(&pad);
+-    if (video_status == PW_OK) (void)pw_videoout_ps5_close(&video);
+-    restart_title(&catalog[chosen], launch.cycle, "launcher");
+-    pw_diagnostics_close("wine64-launch-failed");
+-    _exit(1);
+-}
+-
+ /* N276_FILECHECK_BEGIN */
+ /* Read a bounded DOS and PE32 header from an open regular file. The fixed
+  * offset ceiling avoids unbounded seeks on damaged files. No game bytes are
+@@ -1118,105 +992,6 @@
+ }
+ /* N276_FILECHECK_END */
+ 
+-/* The project's own files in the game folder, shipped in the package. Any Blur
+- * version may be used, but these must match the package exactly. */
+-static const char *const direct_required[] = {
+-    "d3d9.dll", "d3d9_blur_dxvk.dll", "d3d9.c988.dll", "dxvk.conf"
+-};
+-static int direct_file_equal(const char *a, const char *b)
+-{
+-    static uint8_t left[65536], right[65536];
+-    struct stat sa, sb;
+-    int same = 0, fa = open(a, O_RDONLY), fb = open(b, O_RDONLY);
+-    if (fa >= 0 && fb >= 0 && fstat(fa, &sa) == 0 && fstat(fb, &sb) == 0 && sa.st_size == sb.st_size) {
+-        same = 1;
+-        for (off_t remain = sa.st_size; remain > 0 && same;) {
+-            size_t n = remain < (off_t)sizeof(left) ? (size_t)remain : sizeof(left);
+-            if (!direct_read_exact(fa, left, n) || !direct_read_exact(fb, right, n) || memcmp(left, right, n)) same = 0;
+-            remain -= (off_t)n;
+-        }
+-    }
+-    if (fa >= 0) close(fa);
+-    if (fb >= 0) close(fb);
+-    return same;
+-}
+-static int direct_file_copy(const char *src, const char *dst)
+-{
+-    static uint8_t chunk[65536];
+-    char temp[280];
+-    int ok = 0, in = open(src, O_RDONLY), out;
+-    snprintf(temp, sizeof(temp), "%s.install", dst);
+-    out = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+-    if (in >= 0 && out >= 0) {
+-        ssize_t got;
+-        ok = 1;
+-        while (ok && (got = read(in, chunk, sizeof(chunk))) > 0)
+-            for (ssize_t done = 0; ok && done < got;) {
+-                ssize_t put = write(out, chunk + done, (size_t)(got - done));
+-                if (put <= 0) ok = 0; else done += put;
+-            }
+-        if (got < 0) ok = 0;
+-    }
+-    if (in >= 0) close(in);
+-    if (out >= 0) close(out);
+-    if (ok && rename(temp, dst) != 0) ok = 0;
+-    if (!ok) unlink(temp);
+-    return ok;
+-}
+-enum { DIRECT_GAME_MISSING = 0, DIRECT_GAME_OK = 1, DIRECT_INSTALL_FAILED = 2, DIRECT_GAME_WRONG = 3 };
+-/* Any copy of Blur is accepted (user decision 2026-11-13/14): Blur.exe only has
+- * to be a PE file and is never hashed. Checked again only when the file
+- * changes, so the page's polling stays cheap and a copy still in progress
+- * settles by itself. */
+-static int direct_game_state(void)
+-{
+-    static off_t last_size = -1;
+-    static time_t last_time;
+-    static int last_state = DIRECT_GAME_MISSING;
+-    static const char path[] = "/data/Pc/Blur/Blur.exe";
+-    struct stat st;
+-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) { last_size = -1; return DIRECT_GAME_MISSING; }
+-    if (st.st_size == last_size && st.st_mtime == last_time) return last_state;
+-    last_size = st.st_size;
+-    last_time = st.st_mtime;
+-    last_state = direct_game_file_ok(path) ? DIRECT_GAME_OK : DIRECT_GAME_WRONG;
+-    PS5LOG_LOG("PW_WINE64 Blur game check size=%lld state=%d", (long long)st.st_size, last_state);
+-    return last_state;
+-}
+-
+-/* Returns 1 when every required file matches the package afterwards. */
+-static int direct_install_required(void)
+-{
+-    char root[200] = "", src[280], dst[280];
+-    int failed = 0;
+-    for (size_t i = 0; i < sizeof(runtime_roots) / sizeof(runtime_roots[0]) && !root[0]; i++) {
+-        snprintf(src, sizeof(src), "%s/blur-files/%s", runtime_roots[i], direct_required[0]);
+-        if (access(src, R_OK) == 0) snprintf(root, sizeof(root), "%s/blur-files", runtime_roots[i]);
+-    }
+-    /* The app sets up its own folders, before the user has copied anything. */
+-    (void)mkdir("/data/Pc", 0777);
+-    (void)mkdir("/data/Pc/Blur", 0777);
+-    if (!root[0]) {
+-        PS5LOG_LOG("PW_WINE64 Blur files status=package-folder-missing");
+-        return 0;
+-    }
+-    for (size_t i = 0; i < sizeof(direct_required) / sizeof(direct_required[0]); i++) {
+-        snprintf(src, sizeof(src), "%s/%s", root, direct_required[i]);
+-        snprintf(dst, sizeof(dst), "/data/Pc/Blur/%s", direct_required[i]);
+-        int copied = 0;
+-        if (!direct_file_equal(src, dst)) {
+-            copied = direct_file_copy(src, dst);
+-            if (!copied || !direct_file_equal(src, dst)) {
+-                PS5LOG_LOG("PW_WINE64 Blur files status=failed file=%s errno=%d", direct_required[i], errno);
+-                failed = 1;
+-                continue;
+-            }
+-        }
+-        PS5LOG_LOG("PW_WINE64 Blur files file=%s %s", direct_required[i], copied ? "installed" : "ok");
+-    }
+-    return !failed;
+-}
+-
+ /* ---- Blur launcher UI seam (launcher/INTEGRATION.md) -------------------- */
+ 
+ typedef struct BlurHost {
+@@ -1278,15 +1053,46 @@
+     return -1;
+ }
+ 
+-/* is_pro is left NULL ("unknown"): sceKernelIsNeoMode would be the title's only
+- * new import, and without model-pro.ini it changes nothing but a label. */
++/* is_pro and should_quit stay NULL in BLUR 1.00: sceKernelIsNeoMode and a
++ * system-event poll would each be a new import no console has run (plan T1
++ * item 5, decision D2). */
++
++/* ---- free_bytes: free space of the volume holding path (audit finding 16) */
++/* The SDK's libkernel has no statfs and its libc statvfs does not fill its
++ * result, so the kernel's fstatfs (libkernel _fstatfs) is asked directly and
++ * its FreeBSD struct statfs read only when its version says that layout.
++ * Free = f_bavail * f_bsize (FreeBSD has no f_frsize). <0 unknown: the
++ * launcher then skips its disk-space checks, as before. */
++extern int _fstatfs(int fd, void *buf);
++#define BLUR_STATFS_VERSION 0x20030518u
++static long long blur_host_free_bytes(void *ctx, const char *path)
++{
++    union {
++        struct {
++            uint32_t version, type;
++            uint64_t flags, bsize, iosize, blocks, bfree;
++            int64_t bavail;
++        } f;
++        uint8_t raw[1024];              /* the whole struct (472 bytes) with room to spare */
++    } st;
++    int fd, rc;
++    (void)ctx;
++    if (!path || (fd = open(path, O_RDONLY)) < 0) return -1;
++    memset(&st, 0, sizeof(st));
++    rc = _fstatfs(fd, &st);
++    close(fd);
++    if (rc != 0 || st.f.version != BLUR_STATFS_VERSION || st.f.bsize < 512 || st.f.bsize > (1u << 20) ||
++        st.f.bavail < 0 || (uint64_t)st.f.bavail > (uint64_t)INT64_MAX / st.f.bsize)
++        return -1;
++    return st.f.bavail * (long long)st.f.bsize;
++}
+ 
+ /* Readiness when the package has no blur-files/ (then the patcher cannot
+- * decide): any Blur.exe that is a PE file. */
++ * decide): a Blur.exe that is a PE file. */
+ static int blur_host_game_state(void *ctx)
+ {
+     (void)ctx;
+-    return direct_game_file_ok("/data/Pc/Blur/Blur.exe") ? BL_READY_OK : BL_READY_NO_GAME;
++    return direct_game_file_ok(PW_WINE64_GAME_DIR "/Blur.exe") ? BL_READY_OK : BL_READY_NO_GAME;
+ }
+ 
+ static void blur_host_log(void *ctx, const char *line)
+@@ -1295,24 +1101,759 @@
+     PS5LOG_LOG("PW_WINE64 launcher %s", line);
+ }
+ 
++/* The console's on-screen keyboard for the launcher (Online account). Blocks
++ * until the dialog closes; the system draws it over the last frame and owns
++ * the pad meanwhile. secret is not passed on: the dialog shows what is typed,
++ * the launcher shows stars afterwards. */
++static PwOskPs5 blur_osk;
++static int blur_host_osk(void *ctx, const char *title, int secret, char *out, size_t cap)
++{
++    BlurHost *h = ctx;
++    char text[PW_OSK_PS5_TEXT * 4];
++    size_t n;
++    int rc;
++    (void)secret;
++    if (!out || !cap) return -1;
++    out[0] = 0;
++    if (!blur_osk.ready) {
++        int32_t user = h->pad_status == PW_OK ? h->pad.user_id : -1;
++        if (user < 0 && h->ops_ok) {
++            (void)h->pad_ops.user_initialize(NULL);
++            (void)h->pad_ops.foreground_user(&user);
++        }
++        rc = user >= 0 ? pw_osk_ps5_open(&blur_osk, pw_osk_ps5_system_ops(osk_log), user) : PW_ERR_STATE;
++        if (rc != PW_OK) {
++            PS5LOG_LOG("PW_WINE64 launcher osk open=%s user=%d", pw_result_name(rc), (int)user);
++            return -1;
++        }
++    }
++    rc = pw_osk_ps5_show(&blur_osk, title);
++    if (rc != PW_OK) return -1;
++    for (;;) {
++        rc = pw_osk_ps5_poll(&blur_osk, text, sizeof(text));
++        if (rc != 0) break;
++        usleep(PW_WINE64_TICK_US);
++    }
++    n = rc == 1 ? strlen(text) : 0;
++    if (n && n < cap) memcpy(out, text, n + 1);
++    memset(text, 0, sizeof(text));          /* may be a password */
++    return n && n < cap ? 0 : -1;
++}
++
++/* ---- http_date: one HEAD to host:80 for the clock check (D7) ----------- */
++
++typedef struct BlurNetAddr {        /* the console's sockaddr_in (BSD layout) */
++    uint8_t length, family;
++    uint16_t port;
++    uint32_t address;
++    uint8_t zero[8];
++} BlurNetAddr;
++
++extern int sceNetRecv(int socket, void *data, size_t length, int flags);
++extern int sceNetPoolCreate(const char *name, int size, int flags);
++extern void sceNetPoolDestroy(int memid);
++extern int sceNetResolverCreate(const char *name, int memid, int flags);
++extern int sceNetResolverStartNtoa(int rid, const char *hostname, uint32_t *addr, int timeout, int retry, int flags);
++extern int sceNetResolverDestroy(int rid);
++
++/* The resolver runs on its own thread so a resolver that ignores its timeout
++ * can never hold the launcher: the caller waits at most BLUR_HTTP_RESOLVE_MS. */
++enum { BLUR_HTTP_RESOLVE_MS = 1500, BLUR_HTTP_IO_US = 1000000 };
++static struct {
++    pthread_mutex_t lock;
++    int busy, done, rc;
++    uint32_t addr;
++    char host[64];
++    uint32_t timeout_us;                /* the resolver's own timeout for this lookup */
++} blur_resolve = { PTHREAD_MUTEX_INITIALIZER, 0, 0, -1, 0, "", BLUR_HTTP_IO_US };
++
++static void *blur_resolve_thread(void *arg)
++{
++    char host[64];
++    uint32_t addr = 0, timeout_us;
++    int rc = -1, pool, rid = -1;
++    (void)arg;
++    pthread_mutex_lock(&blur_resolve.lock);
++    memcpy(host, blur_resolve.host, sizeof(host));
++    timeout_us = blur_resolve.timeout_us;
++    pthread_mutex_unlock(&blur_resolve.lock);
++    pool = sceNetPoolCreate("blur-clock", 4 * 1024, 0);
++    if (pool >= 0) rid = sceNetResolverCreate("blur-clock", pool, 0);
++    if (rid >= 0) rc = sceNetResolverStartNtoa(rid, host, &addr, timeout_us, 0, 0);
++    if (rid >= 0) (void)sceNetResolverDestroy(rid);
++    if (pool >= 0) sceNetPoolDestroy(pool);
++    pthread_mutex_lock(&blur_resolve.lock);
++    blur_resolve.rc = rc < 0 ? -1 : 0;
++    blur_resolve.addr = addr;
++    blur_resolve.done = 1;
++    blur_resolve.busy = 0;
++    pthread_mutex_unlock(&blur_resolve.lock);
++    return NULL;
++}
++
++static int blur_resolve_ipv4_wait(const char *host, uint32_t *addr, int wait_ms, uint32_t timeout_us)
++{
++    pthread_t thread;
++    pthread_attr_t attr;
++    int started, rc = -1;
++    pthread_mutex_lock(&blur_resolve.lock);
++    if (blur_resolve.busy || strlen(host) >= sizeof(blur_resolve.host)) {   /* an earlier one still hangs */
++        pthread_mutex_unlock(&blur_resolve.lock);
++        return -1;
++    }
++    blur_resolve.busy = 1;
++    blur_resolve.done = 0;
++    snprintf(blur_resolve.host, sizeof(blur_resolve.host), "%s", host);
++    blur_resolve.timeout_us = timeout_us;
++    pthread_mutex_unlock(&blur_resolve.lock);
++    pthread_attr_init(&attr);
++    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
++    pthread_attr_setstacksize(&attr, 256u << 10);
++    started = pthread_create(&thread, &attr, blur_resolve_thread, NULL) == 0;
++    pthread_attr_destroy(&attr);
++    if (!started) {
++        pthread_mutex_lock(&blur_resolve.lock);
++        blur_resolve.busy = 0;
++        pthread_mutex_unlock(&blur_resolve.lock);
++        return -1;
++    }
++    for (int waited = 0; waited <= wait_ms; waited += 20) {
++        pthread_mutex_lock(&blur_resolve.lock);
++        int done = blur_resolve.done;
++        if (done) { rc = blur_resolve.rc; *addr = blur_resolve.addr; }
++        pthread_mutex_unlock(&blur_resolve.lock);
++        if (done) break;
++        usleep(20000);
++    }
++    return rc == 0 && *addr ? 0 : -1;
++}
++
++static int blur_resolve_ipv4(const char *host, uint32_t *addr)
++{
++    return blur_resolve_ipv4_wait(host, addr, BLUR_HTTP_RESOLVE_MS, BLUR_HTTP_IO_US);
++}
++
++/* Finds "Date:" (any case) at the start of a header line; value into out. */
++static int blur_http_date_header(const char *head, char *out, size_t cap)
++{
++    for (const char *line = head; line && *line; ) {
++        if (!strncasecmp(line, "Date:", 5)) {
++            const char *v = line + 5;
++            while (*v == ' ' || *v == '\t') v++;
++            size_t n = strcspn(v, "\r\n");
++            if (!n || n >= cap) return -1;
++            memcpy(out, v, n);
++            out[n] = 0;
++            return 0;
++        }
++        line = strchr(line, '\n');
++        if (line) line++;
++    }
++    return -1;
++}
++
++static int blur_host_http_date(void *ctx, const char *host, long long *epoch)
++{
++    BlurNetAddr address;
++    uint32_t timeout = BLUR_HTTP_IO_US, addr = 0;
++    char request[160], head[2048], date[64];
++    size_t used = 0;
++    int s = -1, rc = -1;
++    uint64_t started = now_ns();
++    (void)ctx;
++    if (!host || !epoch || blur_resolve_ipv4(host, &addr) != 0) goto done;
++    s = ps5log_ps5_socket(AF_INET, SOCK_STREAM, 0);
++    if (s < 0) goto done;
++    {   /* send, receive and connect timeouts in microseconds (pw_lapy_elevation.c) */
++        static const int options[] = { 0x1105, 0x1106, 0x1109 };
++        for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); i++)
++            if (ps5log_ps5_setsockopt(s, 0xffff, options[i], &timeout, sizeof(timeout)) < 0) goto done;
++    }
++    memset(&address, 0, sizeof(address));
++    address.length = sizeof(address);
++    address.family = AF_INET;
++    address.port = (uint16_t)((80 << 8) | (80 >> 8));
++    address.address = addr;
++    if (ps5log_ps5_connect(s, (const struct sockaddr *)&address, sizeof(address)) < 0) goto done;
++    int n = snprintf(request, sizeof(request), "HEAD / HTTP/1.0\r\nHost: %s\r\nUser-Agent: JkFlow\r\n\r\n", host);
++    if (n <= 0 || (size_t)n >= sizeof(request) || ps5log_ps5_send(s, request, (size_t)n, 0) != n) goto done;
++    while (used < sizeof(head) - 1 && now_ns() - started < 3000000000ull) {
++        int got = sceNetRecv(s, head + used, sizeof(head) - 1 - used, 0);
++        if (got <= 0) break;
++        used += (size_t)got;
++        head[used] = 0;
++        if (strstr(head, "\r\n\r\n")) break;
++    }
++    head[used] = 0;
++    if (used && blur_http_date_header(head, date, sizeof(date)) == 0 && bl_http_date_parse(date, epoch) == 0) rc = 0;
++done:
++    if (s >= 0) (void)ps5log_ps5_close(s);
++    PS5LOG_LOG("PW_WINE64 launcher http_date rc=%d ms=%llu", rc,
++               (unsigned long long)((now_ns() - started) / 1000000u));
++    return rc;
++}
++
++/* ---- https_get: the system libSceHttp/libSceSsl, certificate check on ---- */
++/* Console test 2026-11-15 (docs/status/https-console-test-20261115.md):
++ * the same init, pools and timeouts fetched both AMAX zips (200, SHA match);
++ * an unreachable host failed after 30 s with 0x80431068. The modules are
++ * loaded with sceSysmoduleLoadModuleInternal (the one import this adds, from
++ * the already imported libSceSysmodule) until one init succeeds, never again
++ * after; their functions are looked up with sceKernelDlsym, as in pw_osk_ps5.c.
++ * Each operation has a 30 s timeout; the whole download 150 s, and 30 s
++ * without a byte ends it (audit finding 8). Redirects are not followed: only
++ * 200, or 206 for a resumed download, is accepted. The SHA-256 pin, checked
++ * by the launcher before anything is unpacked, decides in the end. */
++extern int sceSysmoduleLoadModuleInternal(unsigned int, ...);
++extern int sceSysmoduleGetModuleHandleInternal(uint32_t id, int32_t *handle);
++extern int sceKernelDlsym(int32_t handle, const char *symbol, void **address);
++
++enum {
++    BLUR_HTTPS_NET_POOL = 64 << 10, BLUR_HTTPS_SSL_POOL = 512 << 10,
++    BLUR_HTTPS_HTTP_POOL = 512 << 10, BLUR_HTTPS_BUFFER = 64 << 10,
++    BLUR_HTTPS_TIMEOUT_US = 30000000,
++    /* The reachability check before a download: DNS, then a TCP connect. */
++    BLUR_HTTPS_REACH_RESOLVE_MS = 2500, BLUR_HTTPS_REACH_RESOLVE_US = 2000000,
++    BLUR_HTTPS_REACH_CONNECT_US = 5000000,
++};
++#define BLUR_HTTPS_TOTAL_NS 150000000000ull
++#define BLUR_HTTPS_STALL_NS 30000000000ull
++
++/* Results of blur_host_https_get (audit finding 8), for the launcher:
++ *   0  BLUR_HTTPS_OK             dest is the complete file, no .part left
++ *  -1  BLUR_HTTPS_FAILED         refused input (.part removed), no HTTPS
++ *                                service or a local file error
++ *  -2  BLUR_HTTPS_NO_CONNECTION  the host did not resolve or did not accept
++ *                                a TCP connection within a few seconds,
++ *                                before any request; .part kept as it was
++ *  -3  BLUR_HTTPS_INTERRUPTED    stopped by the 150 s limit, 30 s without
++ *                                data, or a transport error; .part kept
++ *                                (the next call resumes it)
++ *  -4  BLUR_HTTPS_SERVER_ERROR   an answer other than 200 (or 206 to a
++ *                                resume), a body longer than max_bytes or
++ *                                shorter than announced; .part removed
++ *  -5  BLUR_HTTPS_HASH_MISMATCH  not returned here: the title has no pin;
++ *                                reserved for the launcher's own check
++ *  -6  BLUR_HTTPS_CERT_ERROR     the TLS certificate was not accepted
++ *                                (expired / not yet valid / not verified):
++ *                                the console clock is probably wrong;
++ *                                checking stays on; .part kept
++ *  -7  BLUR_HTTPS_RESUME_MISMATCH  a resume answered 206 with a
++ *                                Content-Range that does not continue the
++ *                                .part; .part removed */
++enum {
++    BLUR_HTTPS_OK = 0, BLUR_HTTPS_FAILED = -1, BLUR_HTTPS_NO_CONNECTION = -2, BLUR_HTTPS_INTERRUPTED = -3,
++    BLUR_HTTPS_SERVER_ERROR = -4, BLUR_HTTPS_HASH_MISMATCH = -5, BLUR_HTTPS_CERT_ERROR = -6,
++    BLUR_HTTPS_RESUME_MISMATCH = -7,
++};
++/* libSceHttp / libSceHttps error codes and sceHttpsGetSslError detail bits
++ * (SDK names; only 0x80431068 has been seen on this console so far). */
++#define BLUR_SCE_HTTP_ERROR_SSL        0x80431075u
++#define BLUR_SCE_HTTPS_ERROR_CERT      0x80435060u
++#define BLUR_SCE_HTTPS_ERROR_HANDSHAKE 0x80435061u
++#define BLUR_SCE_HTTPS_SSL_INVALID_CERT 0x02u
++#define BLUR_SCE_HTTPS_SSL_NOT_AFTER    0x08u     /* expired */
++#define BLUR_SCE_HTTPS_SSL_NOT_BEFORE   0x10u     /* not yet valid */
++#define BLUR_SCE_HTTPS_SSL_UNKNOWN_CA   0x20u
++
++static struct {
++    pthread_mutex_t lock;
++    int state, http;                    /* state 1 ready; 0 not yet (retried next call) */
++    int (*net_init)(void);
++    int (*ssl_init)(size_t pool);
++    int (*ssl_term)(int id);
++    int (*http_init)(int net, int ssl, size_t pool);
++    int (*http_term)(int id);
++    int (*create_template)(int http, const char *agent, int version, int auto_proxy);
++    int (*create_connection)(int tmpl, const char *url, int keepalive);
++    int (*create_request)(int conn, int method, const char *url, uint64_t length);
++    int (*send)(int req, const void *data, size_t size);
++    int (*status)(int req, int *code);
++    int (*content_length)(int req, int *result, uint64_t *length);
++    int (*read)(int req, void *data, uint32_t size);
++    int (*resolve_timeout)(int id, uint32_t us);
++    int (*connect_timeout)(int id, uint32_t us);
++    int (*send_timeout)(int id, uint32_t us);
++    int (*recv_timeout)(int id, uint32_t us);
++    int (*auto_redirect)(int id, int enable);
++    int (*delete_request)(int req);
++    int (*delete_connection)(int conn);
++    int (*delete_template)(int tmpl);
++    /* Optional: without the first two no download is resumed (a .part is
++     * started again); without the third a TLS failure is not told apart. */
++    int (*add_header)(int id, const char *name, const char *value, int mode);
++    int (*all_headers)(int req, char **header, size_t *size);
++    int (*ssl_error)(int req, int *error, uint32_t *detail);
++} blur_https = { .lock = PTHREAD_MUTEX_INITIALIZER, .http = -1 };
++
++static int32_t blur_https_module(uint32_t id)
++{
++    int32_t handle = -1;
++    int load = sceSysmoduleLoadModuleInternal(id);
++    int found = sceSysmoduleGetModuleHandleInternal(id, &handle);
++    if (found != 0 || handle < 0) {
++        PS5LOG_LOG("PW_WINE64 launcher https module 0x%08x load=0x%08x handle=0x%08x",
++                   (unsigned)id, (unsigned)load, (unsigned)found);
++        return -1;
++    }
++    return handle;
++}
++
++static int blur_https_init_locked(void)
++{
++    int32_t net = blur_https_module(0x8000001Cu), ssl = blur_https_module(0x8000000Bu),
++            http = blur_https_module(0x8000000Au);
++    int missing = 0, pool = -1, ssl_id = -1;
++    if (net < 0 || ssl < 0 || http < 0) return -1;
++#define BLUR_HTTPS_SYM(field, handle, name) do { void *p_ = NULL; \
++        if (sceKernelDlsym((handle), (name), &p_) != 0 || !p_) { missing++; \
++            PS5LOG_LOG("PW_WINE64 launcher https no %s", (name)); } \
++        else memcpy(&blur_https.field, &p_, sizeof(p_)); } while (0)
++    BLUR_HTTPS_SYM(net_init, net, "sceNetInit");
++    BLUR_HTTPS_SYM(ssl_init, ssl, "sceSslInit");
++    BLUR_HTTPS_SYM(ssl_term, ssl, "sceSslTerm");
++    BLUR_HTTPS_SYM(http_init, http, "sceHttpInit");
++    BLUR_HTTPS_SYM(http_term, http, "sceHttpTerm");
++    BLUR_HTTPS_SYM(create_template, http, "sceHttpCreateTemplate");
++    BLUR_HTTPS_SYM(create_connection, http, "sceHttpCreateConnectionWithURL");
++    BLUR_HTTPS_SYM(create_request, http, "sceHttpCreateRequestWithURL");
++    BLUR_HTTPS_SYM(send, http, "sceHttpSendRequest");
++    BLUR_HTTPS_SYM(status, http, "sceHttpGetStatusCode");
++    BLUR_HTTPS_SYM(content_length, http, "sceHttpGetResponseContentLength");
++    BLUR_HTTPS_SYM(read, http, "sceHttpReadData");
++    BLUR_HTTPS_SYM(resolve_timeout, http, "sceHttpSetResolveTimeOut");
++    BLUR_HTTPS_SYM(connect_timeout, http, "sceHttpSetConnectTimeOut");
++    BLUR_HTTPS_SYM(send_timeout, http, "sceHttpSetSendTimeOut");
++    BLUR_HTTPS_SYM(recv_timeout, http, "sceHttpSetRecvTimeOut");
++    BLUR_HTTPS_SYM(auto_redirect, http, "sceHttpSetAutoRedirect");
++    BLUR_HTTPS_SYM(delete_request, http, "sceHttpDeleteRequest");
++    BLUR_HTTPS_SYM(delete_connection, http, "sceHttpDeleteConnection");
++    BLUR_HTTPS_SYM(delete_template, http, "sceHttpDeleteTemplate");
++#undef BLUR_HTTPS_SYM
++    if (missing) return -1;
++    {   /* optional */
++        void *p = NULL;
++        if (sceKernelDlsym(http, "sceHttpAddRequestHeader", &p) == 0 && p) memcpy(&blur_https.add_header, &p, sizeof(p));
++        p = NULL;
++        if (sceKernelDlsym(http, "sceHttpGetAllResponseHeaders", &p) == 0 && p) memcpy(&blur_https.all_headers, &p, sizeof(p));
++        p = NULL;
++        if (sceKernelDlsym(http, "sceHttpsGetSslError", &p) == 0 && p) memcpy(&blur_https.ssl_error, &p, sizeof(p));
++        PS5LOG_LOG("PW_WINE64 launcher https resume=%d ssl_error=%d",
++                   blur_https.add_header && blur_https.all_headers, blur_https.ssl_error != NULL);
++    }
++    (void)blur_https.net_init();            /* already initialised by the title: not an error */
++    pool = sceNetPoolCreate("blur-https", BLUR_HTTPS_NET_POOL, 0);
++    if (pool >= 0) ssl_id = blur_https.ssl_init(BLUR_HTTPS_SSL_POOL);
++    if (ssl_id >= 0) blur_https.http = blur_https.http_init(pool, ssl_id, BLUR_HTTPS_HTTP_POOL);
++    PS5LOG_LOG("PW_WINE64 launcher https init pool=0x%08x ssl=0x%08x http=0x%08x",
++               (unsigned)pool, (unsigned)ssl_id, (unsigned)blur_https.http);
++    if (blur_https.http >= 0) return 0;
++    if (ssl_id >= 0) (void)blur_https.ssl_term(ssl_id);
++    if (pool >= 0) sceNetPoolDestroy(pool);
++    return -1;
++}
++
++/* The host and port of an https:// URL. 0 ok. */
++static int blur_https_host(const char *url, char *host, size_t cap, int *port)
++{
++    const char *h = url + 8, *end = h + strcspn(h, ":/?#");
++    size_t n = (size_t)(end - h);
++    *port = 443;
++    if (!n || n >= cap) return -1;
++    memcpy(host, h, n);
++    host[n] = 0;
++    if (*end == ':') {
++        char *stop;
++        long p = strtol(end + 1, &stop, 10);
++        if (p <= 0 || p > 65535 || (*stop && *stop != '/' && *stop != '?' && *stop != '#')) return -1;
++        *port = (int)p;
++    }
++    return 0;
++}
++
++/* Fail fast without internet: DNS, then a TCP connect, a few seconds in
++ * all, before libSceHttp's 30 s timeouts. 0 reachable. */
++static int blur_https_reachable(const char *host, int port)
++{
++    BlurNetAddr address;
++    uint32_t addr = 0, timeout = BLUR_HTTPS_REACH_CONNECT_US;
++    int s, rc = -1;
++    if (blur_resolve_ipv4_wait(host, &addr, BLUR_HTTPS_REACH_RESOLVE_MS, BLUR_HTTPS_REACH_RESOLVE_US) != 0) {
++        PS5LOG_LOG("PW_WINE64 launcher https reach resolve failed");
++        return -1;
++    }
++    s = ps5log_ps5_socket(AF_INET, SOCK_STREAM, 0);
++    if (s < 0) return -1;
++    if (ps5log_ps5_setsockopt(s, 0xffff, 0x1109, &timeout, sizeof(timeout)) >= 0) {   /* connect timeout, us */
++        memset(&address, 0, sizeof(address));
++        address.length = sizeof(address);
++        address.family = AF_INET;
++        address.port = (uint16_t)(((port & 0xff) << 8) | ((port >> 8) & 0xff));
++        address.address = addr;
++        rc = ps5log_ps5_connect(s, (const struct sockaddr *)&address, sizeof(address)) < 0 ? -1 : 0;
++    }
++    (void)ps5log_ps5_close(s);
++    if (rc) PS5LOG_LOG("PW_WINE64 launcher https reach connect failed");
++    return rc;
++}
++
++/* "Content-Range: bytes S-E/T" (any case) in a header block. 0 parsed. */
++static int blur_https_content_range(const char *head, size_t size, unsigned long long *start,
++                                    unsigned long long *end, unsigned long long *total)
++{
++    char block[4096];
++    if (!head || !size) return -1;
++    if (size >= sizeof(block)) size = sizeof(block) - 1;
++    memcpy(block, head, size);
++    block[size] = 0;
++    for (const char *line = block; line && *line; ) {
++        if (!strncasecmp(line, "Content-Range:", 14)) {
++            const char *v = line + 14;
++            char *stop;
++            while (*v == ' ' || *v == '\t') v++;
++            if (strncasecmp(v, "bytes", 5)) return -1;
++            v += 5;
++            while (*v == ' ') v++;
++            if (*v < '0' || *v > '9') return -1;
++            *start = strtoull(v, &stop, 10);
++            if (*stop != '-' || stop[1] < '0' || stop[1] > '9') return -1;
++            *end = strtoull(stop + 1, &stop, 10);
++            if (*stop != '/' || stop[1] < '0' || stop[1] > '9') return -1;
++            *total = strtoull(stop + 1, &stop, 10);
++            if (*stop && *stop != '\r' && *stop != '\n' && *stop != ' ') return -1;
++            return 0;
++        }
++        line = strchr(line, '\n');
++        if (line) line++;
++    }
++    return -1;
++}
++
++/* A failed send: a certificate the console would not accept (expired, not
++ * yet valid, not verified) is told apart, as the clock is the likely cause. */
++static int blur_https_cert_failure(int req, int rc)
++{
++    int error = 0;
++    uint32_t detail = 0;
++    int got = blur_https.ssl_error ? blur_https.ssl_error(req, &error, &detail) : -1;
++    PS5LOG_LOG("PW_WINE64 launcher https send=0x%08x ssl_error=0x%08x/0x%08x detail=0x%x", (unsigned)rc,
++               (unsigned)got, (unsigned)error, (unsigned)detail);
++    if ((unsigned)rc == BLUR_SCE_HTTPS_ERROR_CERT || (got == 0 && (unsigned)error == BLUR_SCE_HTTPS_ERROR_CERT))
++        return 1;
++    if (((unsigned)rc == BLUR_SCE_HTTP_ERROR_SSL || (unsigned)rc == BLUR_SCE_HTTPS_ERROR_HANDSHAKE) && got == 0 &&
++        (detail & (BLUR_SCE_HTTPS_SSL_INVALID_CERT | BLUR_SCE_HTTPS_SSL_NOT_AFTER | BLUR_SCE_HTTPS_SSL_NOT_BEFORE |
++                   BLUR_SCE_HTTPS_SSL_UNKNOWN_CA)))
++        return 1;
++    return 0;
++}
++
++/* GET url (https:// only) into dest+".part", at most max_bytes, renamed to
++ * dest (the final path) when complete. A .part left by an interrupted call
++ * is resumed with Range: bytes=<size>-; a 206 must continue it exactly
++ * (Content-Range start = its size, end = total - 1, total <= max_bytes),
++ * a 200 starts it again from 0 (never appended to). Results: BLUR_HTTPS_*
++ * above; only a complete download replaces dest. */
++static int blur_host_https_get(void *ctx, const char *url, const char *dest, long long max_bytes,
++                               void (*prog)(void *, long long, long long), void *pctx)
++{
++    char part[512], host[256], range[48];
++    int tmpl = -1, conn = -1, req = -1, code = 0, rc = BLUR_HTTPS_FAILED, step = 0, last = 0, has_length = -1;
++    int port = 443, keep_part = 0, resume = 0;
++    uint64_t length = 0, started = now_ns(), progress_ns = started, now = started;
++    long long got = 0, total = -1, have = 0;
++    uint8_t *buffer = NULL;
++    FILE *file = NULL;
++    int ready, have_part = 0;
++    struct stat st;
++    (void)ctx;
++    if (!dest || snprintf(part, sizeof(part), "%s.part", dest) >= (int)sizeof(part)) goto done;
++    step = 1;
++    if (!url || strncmp(url, "https://", 8) || max_bytes <= 0 ||
++        blur_https_host(url, host, sizeof(host), &port) != 0) {
++        have_part = 1;                      /* refused input: no stale .part either */
++        goto done;
++    }
++    keep_part = 1;                          /* from here a failure before the request keeps it */
++    have_part = 1;
++    step = 19;
++    if (blur_https_reachable(host, port) != 0) { rc = BLUR_HTTPS_NO_CONNECTION; goto done; }
++    pthread_mutex_lock(&blur_https.lock);
++    if (blur_https.state != 1 && blur_https_init_locked() == 0) blur_https.state = 1;
++    ready = blur_https.state == 1;
++    pthread_mutex_unlock(&blur_https.lock);
++    step = 2;
++    if (!ready) { keep_part = 0; goto done; }
++    /* A .part to resume: a regular file, shorter than the limit. */
++    if (stat(part, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size < max_bytes &&
++        blur_https.add_header && blur_https.all_headers && access(part, W_OK) == 0)
++        have = (long long)st.st_size;
++    else (void)remove(part);
++    step = 3;
++    if ((last = tmpl = blur_https.create_template(blur_https.http, "JkFlow", 2 /* HTTP/1.1 */, 1)) < 0) goto done;
++    step = 4;
++    if ((last = blur_https.resolve_timeout(tmpl, BLUR_HTTPS_TIMEOUT_US)) < 0 ||
++        (last = blur_https.connect_timeout(tmpl, BLUR_HTTPS_TIMEOUT_US)) < 0 ||
++        (last = blur_https.send_timeout(tmpl, BLUR_HTTPS_TIMEOUT_US)) < 0 ||
++        (last = blur_https.recv_timeout(tmpl, BLUR_HTTPS_TIMEOUT_US)) < 0 ||
++        (last = blur_https.auto_redirect(tmpl, 0)) < 0) goto done;
++    step = 5;
++    if ((last = conn = blur_https.create_connection(tmpl, url, 1)) < 0) goto done;
++    step = 6;
++    if ((last = req = blur_https.create_request(conn, 0 /* GET */, url, 0)) < 0) goto done;
++    if (have) {
++        snprintf(range, sizeof(range), "bytes=%lld-", have);
++        if ((last = blur_https.add_header(req, "Range", range, 0 /* overwrite */)) < 0) goto done;
++    }
++    step = 7;
++    if ((last = blur_https.send(req, NULL, 0)) < 0) {
++        rc = blur_https_cert_failure(req, last) ? BLUR_HTTPS_CERT_ERROR : BLUR_HTTPS_INTERRUPTED;
++        goto done;
++    }
++    progress_ns = now = now_ns();
++    if (now - started > BLUR_HTTPS_TOTAL_NS) { step = 17; rc = BLUR_HTTPS_INTERRUPTED; goto done; }
++    step = 8;
++    keep_part = 0;                          /* the server answered: from here the answer decides */
++    if ((last = blur_https.status(req, &code)) < 0) goto done;
++    if (code != 200 && !(code == 206 && have)) { rc = BLUR_HTTPS_SERVER_ERROR; goto done; }
++    step = 9;
++    if ((last = blur_https.content_length(req, &has_length, &length)) < 0) goto done;
++    if (code == 206) {
++        char *head = NULL;
++        size_t head_size = 0;
++        unsigned long long first = 0, end = 0, whole = 0;
++        step = 20;
++        rc = BLUR_HTTPS_RESUME_MISMATCH;
++        if ((last = blur_https.all_headers(req, &head, &head_size)) < 0 ||
++            blur_https_content_range(head, head_size, &first, &end, &whole) != 0 ||
++            first != (unsigned long long)have || end < first || end + 1 != whole || whole > (unsigned long long)max_bytes ||
++            (has_length == 0 && length != whole - first)) {
++            PS5LOG_LOG("PW_WINE64 launcher https resume refused: part=%lld range=%llu-%llu/%llu", have,
++                       first, end, whole);
++            goto done;
++        }
++        rc = BLUR_HTTPS_FAILED;
++        got = have;
++        total = (long long)whole;
++        if (!(file = fopen(part, "ab"))) goto done;
++    } else {
++        if (has_length == 0) {
++            if (length > (uint64_t)max_bytes) { rc = BLUR_HTTPS_SERVER_ERROR; goto done; }
++            total = (long long)length;
++        }
++        if (have) PS5LOG_LOG("PW_WINE64 launcher https resume answered 200: from 0");
++        if (!(file = fopen(part, "wb"))) goto done;   /* a 200 starts again, never appended */
++    }
++    resume = code == 206;
++    step = 10;
++    if (!(buffer = malloc(BLUR_HTTPS_BUFFER))) goto done;
++    step = 11;
++    for (;;) {
++        int n = last = blur_https.read(req, buffer, BLUR_HTTPS_BUFFER);
++        if (n < 0) { rc = BLUR_HTTPS_INTERRUPTED; keep_part = 1; goto done; }
++        now = now_ns();
++        if (now - started > BLUR_HTTPS_TOTAL_NS) { step = 17; rc = BLUR_HTTPS_INTERRUPTED; keep_part = 1; goto done; }
++        if (now - progress_ns > BLUR_HTTPS_STALL_NS) { step = 18; rc = BLUR_HTTPS_INTERRUPTED; keep_part = 1; goto done; }
++        if (n == 0) break;
++        progress_ns = now;
++        if ((long long)n > max_bytes - got) { step = 12; rc = BLUR_HTTPS_SERVER_ERROR; goto done; }
++        if (fwrite(buffer, 1, (size_t)n, file) != (size_t)n) { step = 13; goto done; }
++        got += n;
++        if (prog) prog(pctx, got, total);
++    }
++    step = 14;
++    if (total >= 0 && got != total) { rc = BLUR_HTTPS_SERVER_ERROR; goto done; }
++    step = 15;
++    last = fclose(file);
++    file = NULL;
++    if (last != 0) goto done;
++    step = 16;
++    if (rename(part, dest) != 0) {
++        (void)remove(dest);
++        if (rename(part, dest) != 0) goto done;
++    }
++    rc = BLUR_HTTPS_OK;
++done:
++    if (file) fclose(file);
++    if (rc != BLUR_HTTPS_OK && have_part && !keep_part) (void)remove(part);
++    free(buffer);
++    if (req >= 0) (void)blur_https.delete_request(req);
++    if (conn >= 0) (void)blur_https.delete_connection(conn);
++    if (tmpl >= 0) (void)blur_https.delete_template(tmpl);
++    PS5LOG_LOG("PW_WINE64 launcher https_get rc=%d step=%d last=0x%08x http=%d resumed=%d from=%lld bytes=%lld ms=%llu",
++               rc, rc ? step : 0, (unsigned)last, code, resume, have, got,
++               (unsigned long long)((now_ns() - started) / 1000000u));
++    return rc;
++}
++
+ /* The player's decision for this start; its strings back extra[] until Wine
+  * has copied them. */
+ static BlDecision blur_decision;
+ /* Logging on in the launcher (BLUR_LOGS=1): the periodic runtime lines. */
+ static int blur_logs_verbose;
+-/* The remote-control file is polled during the game (test runs only). */
+-static int blur_remote_on;
+ 
+-/* Runs the launcher UI until play (returns) or close (leaves to home). */
++/* ---- first start: the prefix from the package's seed (T1 items 3-4) --- */
++
++typedef struct BlurSeedDraw {
++    BlurHost *host;
++    BlFrame frame;
++    uint64_t started, last_ns;
++    int drawn;
++} BlurSeedDraw;
++
++/* Owner 2026-11-15: the big line says "Preparing BLUR environment", the
++ * small line "First start only..."; "Starting Blur..." only after Play. */
++
++static void blur_seed_progress(void *ctx, unsigned done, unsigned total)
++{
++    BlurSeedDraw *d = ctx;
++    uint64_t now = now_ns();
++    if (!d->frame.pixels || (d->drawn && done != total && now - d->last_ns < 33000000ull)) return;
++    d->last_ns = now;
++    d->drawn = 1;
++    bl_loader_draw_progress(&d->frame, (now - d->started) / 1000000ull, bl_str(BL_S_LOADER_PREPARE), done, total,
++                            bl_str(BL_S_LOADER_FIRST_START));
++    (void)blur_host_present(d->host, &d->frame);
++}
++
++/* Audit finding 23 (text only): under the title's own error screens whose
++ * Close ends in leave_to_home, whose own end the console may report. y <= 0:
++ * near the bottom of the frame. */
++#define BLUR_HOME_NOTE "The PS4 may then show 'Something went wrong'. That is expected here; start JkFlow again."
++static void blur_home_note(BlFrame *f, int y)
++{
++    if (!f || !f->pixels) return;
++    if (y <= 0) y = (int)f->height * 88 / 100;
++    (void)bl_text(f, BL_FONT_NOTE, ((int)f->width - bl_text_width(BL_FONT_NOTE, BLUR_HOME_NOTE)) / 2, y,
++                  BLUR_HOME_NOTE, 0xA9BBDC);
++}
++
++/* <root>/prefix from the seed: nothing on later starts, the whole prefix on
++ * the first one, and only files outside drive_c/users/ when the package
++ * brings a new seed. A failure shows E110 with Retry (Cross) or Close
++ * (Circle). Without a display it returns 0 only when the prefix is ready. */
++static int blur_prepare_prefix(BlurHost *host, int video_ok, const char *prefix)
++{
++    BlurSeedDraw draw;
++    memset(&draw, 0, sizeof(draw));
++    draw.host = host;
++    draw.started = now_ns();
++    if (video_ok) {
++        const size_t bytes = (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4u;
++        void *pixels = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++        if (pixels != MAP_FAILED)
++            draw.frame = (BlFrame){ pixels, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
++                                    PW_LAUNCHER_RENDER_WIDTH * 4u };
++    }
++    for (unsigned attempt = 1;; attempt++) {
++        N245Result seed;
++        uint64_t t0 = now_ns();
++        N245Status st = n245_seed_import2(runtime_roots, sizeof(runtime_roots) / sizeof(runtime_roots[0]), prefix,
++                                          n245_seed_pinned_end(), &seed, blur_seed_progress, &draw, 1);
++        PS5LOG_LOG("PW_WINE64 seed status=%s attempt=%u files=%u copied=%u kept=%u bytes=%llu ms=%llu "
++                   "prefix=%s seed_root=%s detail=%s", n245_status_name(st), attempt, seed.files_total,
++                   seed.copied, seed.kept, seed.bytes_copied, (unsigned long long)((now_ns() - t0) / 1000000u),
++                   prefix, seed.seed_root[0] ? seed.seed_root : "-", seed.detail[0] ? seed.detail : "-");
++        if (st == N245_IMPORTED || st == N245_UPDATED || st == N245_PRESENT ||
++            st == N245_DISABLED || st == N245_NO_SEED) {
++            if (draw.frame.pixels) munmap(draw.frame.pixels, (size_t)draw.frame.stride * draw.frame.height);
++            return 0;
++        }
++        if (!draw.frame.pixels) return -1;
++        bl_loader_draw_progress(&draw.frame, (now_ns() - draw.started) / 1000000ull, bl_str(BL_S_LOADER_PREPARE), 0, 0,
++                                "E110 JkFlow could not prepare its files. Cross: try again   Circle: close");
++        blur_home_note(&draw.frame, 0);       /* Circle: leave_to_home */
++        (void)blur_host_present(host, &draw.frame);
++        for (;;) {
++            uint32_t held, pressed;
++            if (blur_host_pad(host, &held, &pressed) == 0) {
++                if (pressed & PAD_CROSS) break;
++                if (pressed & 0x2000u) leave_to_home("blur-seed-failed");   /* Circle */
++            }
++            usleep(PW_WINE64_TICK_US);
++        }
++        draw.drawn = 0;
++    }
++}
++
++/* The launcher's dxvk.conf (model-base.ini [dxvk.conf]) at <root>/cache/dxvk.conf,
++ * where DXVK_CONFIG_FILE points: written only when it differs, atomically. */
++static void blur_write_dxvk_conf(void)
++{
++    char dir[160], path[192], temp[208], old[sizeof(blur_decision.dxvk_conf)];
++    const char *text = blur_decision.dxvk_conf;
++    size_t n = strlen(text), got = 0;
++    int fd, ok = 0;
++    if (!n) return;
++    snprintf(dir, sizeof(dir), "%s/cache", library_root);
++    snprintf(path, sizeof(path), "%s/dxvk.conf", dir);
++    snprintf(temp, sizeof(temp), "%s.new", path);
++    (void)mkdir(dir, 0777);
++    if ((fd = open(path, O_RDONLY)) >= 0) {
++        ssize_t r;
++        while (got < sizeof(old) && (r = read(fd, old + got, sizeof(old) - got)) > 0) got += (size_t)r;
++        close(fd);
++        if (got == n && !memcmp(old, text, n)) { PS5LOG_LOG("PW_WINE64 dxvk.conf unchanged"); return; }
++    }
++    if ((fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0666)) >= 0) {
++        ok = write(fd, text, n) == (ssize_t)n && fsync(fd) == 0;
++        ok = close(fd) == 0 && ok;
++        ok = ok && rename(temp, path) == 0;
++        if (!ok) (void)unlink(temp);
++    }
++    PS5LOG_LOG("PW_WINE64 dxvk.conf written=%d bytes=%u", ok, (unsigned)n);
++}
++
++/* The title's own stop screen (review findings 1 and 3): "blur didn't
++ * start", one sentence why, "Circle: close". Opens and closes the display and
++ * pad itself; returns once Circle is pressed, at once without a display.
++ * then_home: the caller ends in leave_to_home, so the screen says what the
++ * console may show then (audit finding 23). */
++static void blur_stop_screen(const char *text, const char *reason, int then_home)
++{
++    static BlurHost stop;
++    PS5LOG_LOG("PW_WINE64 stop screen reason=%s text=%s", reason, text);
++    memset(&stop, 0, sizeof(stop));
++    if (pw_videoout_ps5_open(&stop.video) != PW_OK) return;
++    stop.ops_ok = pw_pad_ps5_platform_ops(&stop.pad_ops) == PW_OK;
++    stop.pad_status = stop.ops_ok ? pw_pad_ps5_open(&stop.pad, &stop.pad_ops, pad_open_map,
++                                                    sizeof(pad_open_map) / sizeof(pad_open_map[0]))
++                                  : PW_ERR_STATE;
++    stop.pad_tried = now_ns();
++    const size_t bytes = (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4u;
++    void *pixels = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++    if (pixels != MAP_FAILED) {
++        BlFrame frame = { pixels, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT, PW_LAUNCHER_RENDER_WIDTH * 4u };
++        int below = bl_notice_draw(&frame, text, bl_str(BL_S_HINT_CLOSE_NOTICE));
++        if (then_home) blur_home_note(&frame, below + 12);
++        for (;;) {
++            uint32_t held, pressed;
++            if (blur_host_present(&stop, &frame) < 0) break;
++            if (blur_host_pad(&stop, &held, &pressed) == 0 && (pressed & 0x2000u)) break;   /* Circle */
++            usleep(PW_WINE64_TICK_US);
++        }
++        munmap(pixels, bytes);
++    }
++    if (stop.pad_status == PW_OK) (void)pw_pad_ps5_close(&stop.pad);
++    (void)pw_videoout_ps5_close(&stop.video);
++}
++
++/* Runs the launcher UI until play (returns) or close (leaves to home). The
++ * display opens first, so the first-start import is drawn. */
+ static void blur_launcher_screen(void)
+ {
+     static BlurHost host;
+-    static char files_dir[200];
++    static char files_dir[200], prefix_dir[96];
+     BlServices s;
+     memset(&s, 0, sizeof(s));
+-    /* The app sets up its own folders, before the user has copied anything. */
+-    (void)mkdir("/data/Pc", 0777);
+-    (void)mkdir("/data/Pc/Blur", 0777);
++    /* Review finding 1: old data still in the old root. No prefix import, no
++     * launcher state over it: say so and close; the next start tries again. */
++    if (blur_migrate_blocked) {
++        blur_stop_screen(blur_migrate_text, "blur-migrate-blocked", 1);
++        leave_to_home("blur-migrate-blocked");
++    }
++    /* The app's own folders (System, Logs) were made by blur_find_roots. */
++    /* No game folder is created: it is the player's, /data/JkFlow/Blur in any case. */
++    snprintf(prefix_dir, sizeof(prefix_dir), "%s/prefix", library_root);
+     for (size_t i = 0; i < sizeof(runtime_roots) / sizeof(runtime_roots[0]) && !files_dir[0]; i++) {
+         char probe[240];
+         snprintf(probe, sizeof(probe), "%s/blur-files/manifest.txt", runtime_roots[i]);
+@@ -1326,19 +1867,33 @@
+     host.pad_tried = now_ns();
+     PS5LOG_LOG("PW_WINE64 launcher open video=%s pad=%s files=%s", pw_result_name(video_status),
+                pw_result_name(host.pad_status), files_dir[0] ? files_dir : "-");
++    if (blur_prepare_prefix(&host, video_status == PW_OK, prefix_dir) != 0)
++        leave_to_home("blur-seed-failed-no-display");
+     s.ctx = &host;
+     s.present = blur_host_present;
+     s.pad = blur_host_pad;
++    s.osk = blur_host_osk;
+     s.now_ns = blur_host_now;
+     s.sleep_us = blur_host_sleep;
+     s.net_status = blur_host_net;
++    s.http_date = blur_host_http_date;
++    s.https_get = blur_host_https_get;
++    s.free_bytes = blur_host_free_bytes;
+     s.game_state = blur_host_game_state;
+     s.log = blur_host_log;
+     s.data_root = library_root;
+-    s.game_dir = "/data/Pc/Blur";
++    s.game_root = "/data";                /* the launcher finds /data/JkFlow/Blur in any case */
+     s.package_files_dir = files_dir[0] ? files_dir : NULL;
+     s.build_id = PW_BUILD_ID;
++    /* Audit 26: the PS4 local name as Blur gets it (the same resolver as the
++     * game phase, UserService is up with the pad), masked as <ps4-user> in a
++     * support bundle. Only a name actually read: never mask "Player". */
++    static PwBlurName local_name;
++    int local_sanitized = 1;
++    if (pw_blur100_display_name_from_orbis(&local_name, &local_sanitized) && local_name.utf8[0])
++        s.local_user = local_name.utf8;
+     int rc = video_status == PW_OK ? bl_frontend_run(&s, &blur_decision) : -1;
++    if (blur_osk.ready) pw_osk_ps5_close(&blur_osk);
+     if (host.pad_status == PW_OK) (void)pw_pad_ps5_close(&host.pad);
+     if (video_status == PW_OK) (void)pw_videoout_ps5_close(&host.video);
+     if (rc != 0) {
+@@ -1349,16 +1904,42 @@
+         leave_to_home("blur-launcher-no-display");
+     }
+     if (blur_decision.action == BL_LEAVE_HOME) leave_to_home("blur-launcher-close");
++    blur_write_dxvk_conf();
+     PS5LOG_LOG("PW_WINE64 launcher chose=start env=%u", blur_decision.env_count);
+ }
+ 
++/* Audit finding 7: extra[] holds BLUR_ENV_CAPACITY lines up to and with the
++ * launcher's (worst case measured by test_title_profile: 27 with logs on and
++ * the race lock, so 21 lines of headroom), then BLUR_ENV_AFTER for the
++ * title's later lines (NETCFG, the display name). Past it the start fails
++ * closed. ntdll.prx keeps its own copy of every line (pw_ps4_setenv,
++ * orbis/src/native/pw_prx_env_ps4.c, PW_ENV_MAX 64, which drops a line past
++ * it without telling): the title's 3 own lines plus all of extra[] fit. */
++enum { BLUR_ENV_CAPACITY = 48, BLUR_ENV_AFTER = 4, BLUR_PRX_ENV_MAX = 64, BLUR_PRX_ENV_OWN = 3 };
++
+ /* The launcher's environment into extra[]: WINEDEBUG through extra[0], the
+- * rest replaces a variable the profile already set or is appended. The
+- * launcher removes DXVK_PS4_NATIVE for the compatible renderer, so a value
+- * the built-in profile set is dropped too. */
+-static void blur_apply_decision(PwWineStartEnv *extra, uint32_t *count, size_t capacity)
+-{
+-    int native = 0;
++ * rest replaces a variable the profile already set or is appended. BLUR is
++ * native only (DXVK_PS4_NATIVE_ONLY=1); a decision without DXVK_PS4_NATIVE
++ * still drops a value the built-in profile set. Fails closed (review
++ * finding 3): -1 when a line does not fit (each one logged by name), and
++ * the caller does not start Blur. 0 ok. */
++static int blur_apply_decision(PwWineStartEnv *extra, uint32_t *count, size_t capacity)
++{
++    int native = 0, dropped = 0;
++    /* The hand-off (BlDecision.env): never read past its slots or a line
++     * without its terminator. */
++    if (blur_decision.env_count > sizeof(blur_decision.env) / sizeof(blur_decision.env[0])) {
++        PS5LOG_LOG("PW_WINE64 launcher env refused: hand-off count %u past %u slots: Blur not started",
++                   blur_decision.env_count, (unsigned)(sizeof(blur_decision.env) / sizeof(blur_decision.env[0])));
++        return -1;
++    }
++    for (unsigned i = 0; i < blur_decision.env_count; i++)
++        if (!memchr(blur_decision.env[i].name, 0, sizeof(blur_decision.env[i].name)) ||
++            !memchr(blur_decision.env[i].value, 0, sizeof(blur_decision.env[i].value)) ||
++            !blur_decision.env[i].name[0]) {
++            PS5LOG_LOG("PW_WINE64 launcher env refused: hand-off line %u malformed: Blur not started", i);
++            return -1;
++        }
+     for (unsigned i = 0; i < blur_decision.env_count; i++) {
+         const char *name = blur_decision.env[i].name, *value = blur_decision.env[i].value;
+         if (!strcmp(name, "DXVK_PS4_NATIVE")) native = 1;
+@@ -1368,7 +1949,7 @@
+         for (j = 1; j < *count; j++) if (extra[j].name && !strcmp(extra[j].name, name)) break;
+         if (j < *count) extra[j].value = value;
+         else if (*count < capacity) extra[(*count)++] = (PwWineStartEnv){ name, value };
+-        else PS5LOG_LOG("PW_WINE64 launcher env dropped=%s (no room)", name);
++        else { PS5LOG_LOG("PW_WINE64 launcher env refused=%s (no room): Blur not started", name); dropped++; }
+     }
+     if (!native)
+         for (uint32_t j = 1; j < *count; j++)
+@@ -1378,113 +1959,20 @@
+                 extra[*count] = (PwWineStartEnv){ NULL, NULL };
+                 break;
+             }
+-    PS5LOG_LOG("PW_WINE64 launcher env applied=%u native=%d winedebug=%s", blur_decision.env_count, native,
+-               extra[0].value);
++    PS5LOG_LOG("PW_WINE64 launcher env applied=%u native=%d winedebug=%s count=%u/%u refused=%d",
++               blur_decision.env_count, native, extra[0].value, (unsigned)*count, (unsigned)capacity, dropped);
++    return dropped ? -1 : 0;
+ }
+ 
+-/* Normal-mode start page: a found game waits for Cross, a missing one explains
+- * where to put it. The file is checked again while the page is up, so a copy
+- * finished over FTP is picked up without restarting. */
+-int pw_blur_start_render(const PwPresentTarget *target, int state);
+-static void direct_start_screen(void)
+-{
+-    static PwVideoOutPs5 video;
+-    static PwPadPs5 pad;
+-    PwPadPs5Ops pad_ops;
+-    const size_t size = (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4u;
+-    uint8_t *frame = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+-    int video_status = pw_videoout_ps5_open(&video);
+-    int pad_status = pw_pad_ps5_platform_ops(&pad_ops);
+-    int found = -1, ready = 0, ops_ok = pad_status == PW_OK;
+-    const int installed = direct_install_required();
+-
+-    if (ops_ok)
+-        pad_status = pw_pad_ps5_open(&pad, &pad_ops, pad_open_map,
+-                                     sizeof(pad_open_map) / sizeof(pad_open_map[0]));
+-    if (video_status != PW_OK || frame == MAP_FAILED) {
+-        PS5LOG_LOG("PW_WINE64 Blur start page video=%s frame=%d", pw_result_name(video_status), frame != MAP_FAILED);
+-        if (pad_status == PW_OK) (void)pw_pad_ps5_close(&pad);
+-        if (installed && direct_game_state() == DIRECT_GAME_OK) return;
+-        for (;;) usleep(250000);
+-    }
+-    const PwPresentTarget target = { frame, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
+-                                     PW_LAUNCHER_RENDER_WIDTH * 4u, size };
+-    const PwPresentView view = { frame, target.width, target.height, target.stride, (uint32_t)size };
+-    for (uint64_t tick = 0;; tick++) {
+-        if (tick % (2 * PW_WINE64_TICKS_PER_S) == 0) {
+-            int now_found = installed ? direct_game_state() : DIRECT_INSTALL_FAILED;
+-            if (now_found != found) {
+-                found = now_found;
+-                ready = found == DIRECT_GAME_OK;
+-                int rc = pw_blur_start_render(&target, found);
+-                if (rc == PW_OK) rc = pw_videoout_ps5_present(&video, &view);
+-                PS5LOG_LOG("PW_WINE64 Blur start page found=%d ready=%d present=%s", found, ready, pw_result_name(rc));
+-            }
+-            /* No controller signed in yet: keep trying while the page is up. */
+-            if (pad_status != PW_OK && ops_ok && tick)
+-                pad_status = pw_pad_ps5_open(&pad, &pad_ops, pad_open_map,
+-                                             sizeof(pad_open_map) / sizeof(pad_open_map[0]));
+-        }
+-        if (ready && pad_status == PW_OK && pw_pad_ps5_read(&pad) == PW_OK &&
+-            (pad.core.pressed_edges & PAD_CROSS))
+-            break;
+-        usleep(PW_WINE64_TICK_US);
+-    }
+-    PS5LOG_LOG("PW_WINE64 Blur start page chose=start");
+-    (void)pw_pad_ps5_close(&pad);
+-    (void)pw_videoout_ps5_close(&video);
+-    munmap(frame, size);
+-}
+-
+-/* Runs only before Wine's environment/thread. Existing PS4 IME handles and
+- * local UserService selection are reused; no account/home/save is renamed. */
+-int pw_blur_name_setup_render(const PwPresentTarget *target,const char *message,int stopped);
+-static void direct_player_name_setup(PwBlurName *name,PwOskPs5 *osk,PwVideoOutPs5 *video,
+-                                      int video_status,int force_edit)
+-{
+-    PwBlurNameSetup setup;PwBlurNameFile file;
+-    PwBlurNameSetupOps ops={&file,pw_blur_name_file_load,pw_blur_name_file_save,NULL};
+-    /* First-entry IME is a native setup dialog, independent of Wine's guest
+-     * keyboard sink. Module preload already happened before the /data grant. */
+-    if((force_edit || !pw_blur_name_portable(name)) && name->user_id>=0 && !osk->ready)
+-        (void)pw_osk_ps5_open(osk,pw_osk_ps5_system_ops(osk_log),name->user_id);
+-    if(pw_blur_name_file_init(&file,library_root,name->user_id)){ops.load=NULL;ops.save=NULL;}
+-    int state=pw_blur_name_setup_begin(&setup,name,osk,&ops,force_edit);
+-    if(state==PW_BLUR_SETUP_READY){*name=setup.selected;return;}
+-    const size_t bytes=(size_t)PW_LAUNCHER_RENDER_WIDTH*PW_LAUNCHER_RENDER_HEIGHT*4u;
+-    uint8_t *frame=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+-    if(video_status!=PW_OK || frame==MAP_FAILED) {
+-        pw_blur_name_setup_close(&setup);
+-        PS5LOG_LOG("PW_WINE64 display_name setup=failed reason=display-unavailable");
+-        leave_to_home("blur-name-setup-display-unavailable");
+-    }
+-    const PwPresentTarget target={frame,PW_LAUNCHER_RENDER_WIDTH,PW_LAUNCHER_RENDER_HEIGHT,
+-                                  PW_LAUNCHER_RENDER_WIDTH*4u,bytes};
+-    const PwPresentView view={frame,target.width,target.height,target.stride,(uint32_t)bytes};
+-    for(;;) {
+-        if(state==PW_BLUR_SETUP_READY) {
+-            *name=setup.selected;pw_blur_name_setup_close(&setup);munmap(frame,bytes);
+-            PS5LOG_LOG("PW_WINE64 display_name setup=ready source=%s bytes=%u",
+-                       setup.source==PW_BLUR_SETUP_ENTERED?"entered":"saved-fallback",(unsigned)name->bytes);
+-            return;
+-        }
+-        int stopped=state!=PW_BLUR_SETUP_WAIT;
+-        int rc=pw_blur_name_setup_render(&target,setup.message,stopped);
+-        if(rc==PW_OK)rc=pw_videoout_ps5_present(video,&view);
+-        (void)sceGnmSubmitDone();
+-        if(rc!=PW_OK) {
+-            pw_blur_name_setup_close(&setup);
+-            PS5LOG_LOG("PW_WINE64 display_name setup=failed reason=present status=%d",rc);
+-            leave_to_home("blur-name-setup-present-failed");
+-        }
+-        if(stopped) {
+-            PS5LOG_LOG("PW_WINE64 display_name setup=%s error=%d no_game_launch=1",
+-                       state==PW_BLUR_SETUP_CANCELLED?"cancelled":"failed",setup.error);
+-            for(;;)usleep(250000); /* explicit page; no restart/relaunch loop */
+-        }
+-        usleep(PW_WINE64_TICK_US);
+-        state=pw_blur_name_setup_poll(&setup);
+-    }
++/* blur_apply_decision refused a line: Blur does not start. The reason on
++ * screen, then back to the launcher (where Enable logs can be turned off).
++ * The session record is closed: the notice already said why. */
++static void blur_env_refused(void)
++{
++    blur_stop_screen(bl_str(BL_S_TOO_MANY_SETTINGS), "blur-env-overflow", 0);   /* back to the launcher */
++    bl_session_end_clean();
++    restart_title(NULL, launch.cycle + 1u, "blur-env-overflow");
++    leave_to_home("blur-env-overflow");
+ }
+ 
+ /* ---- early fault report ------------------------------------------------ */
+@@ -1606,13 +2094,13 @@
+             * mprotect marker by one.) */
+            WINE64_PROFILE_ENV_CAPACITY = 9 + PW_GAME_GRAPHICS_ENV_MAX + PW_GAME_RUNTIME_ENV_MAX + PW_GAME_CPU_ENV_MAX +
+                                          PW_GAME_CLOCK_ENV_MAX + PW_GAME_DEBUG_ENV_MAX };
+-    static PwWineStartEnv extra[WINE64_FIXED_ENV_COUNT + WINE64_PROFILE_ENV_CAPACITY] = {
++    static PwWineStartEnv extra[BLUR_ENV_CAPACITY + BLUR_ENV_AFTER] = {
+         { "WINEDEBUG", PW_WINE64_DEBUG },
+         /* the i386 exe runs in this process through WoW64; otherwise Wine
+          * starts it from start.exe in a new process, which a title cannot */
+         { "WINEARCH", "wow64" },
+         { "HOME", prefix },
+-        { "USER", "prospero" },
++        { "USER", "BLUR" },                 /* the seed's drive_c/users/BLUR */
+         { "WINE_PS5_TRACE_STARTUP", "1" },  /* patch 0560: name startup steps */
+         { "WINE_PS5_VIEW", view },          /* patch 0430: the game's windows, or the desktop */
+         /* RADV's shader cache. The driver's PS5 layer would put it under
+@@ -1624,11 +2112,14 @@
+         { "MESA_SHADER_CACHE_DIR", radv_cache },
+         { NULL, NULL }, { NULL, NULL }, { NULL, NULL }, { NULL, NULL }, /* profile-specific environment */
+     };
+-    _Static_assert(sizeof(extra) / sizeof(extra[0]) ==
+-                   WINE64_FIXED_ENV_COUNT + WINE64_PROFILE_ENV_CAPACITY,
++    /* The title's own lines before the launcher's are written unchecked:
++     * they must fit under the fail-closed capacity on their own. */
++    _Static_assert(WINE64_FIXED_ENV_COUNT + WINE64_PROFILE_ENV_CAPACITY <= BLUR_ENV_CAPACITY,
+                    "profile environment capacity changed");
+-    _Static_assert(WINE64_FIXED_ENV_COUNT + WINE64_PROFILE_ENV_CAPACITY <= PW_WINE_START_MAX_ENV,
++    _Static_assert(sizeof(extra) / sizeof(extra[0]) <= PW_WINE_START_MAX_ENV,
+                    "more environment than pw_wine_start sets");
++    _Static_assert(PW_WINE_START_MAX_ENV + BLUR_PRX_ENV_OWN <= BLUR_PRX_ENV_MAX,
++                   "more environment than ntdll.prx keeps");
+     /* wine, the executable, the profile's argument words, NULL */
+     static const char *wine_argv[2 + PW_WINE_LAUNCH_WORDS + 1] = { "wine" };
+     static char argument_words[PW_APP_ARGUMENTS_CAPACITY];
+@@ -1684,68 +2175,38 @@
+     uint64_t shown_sequence = 0, shown = 0, posted = 0, refused = 0;
+     VulkanFrames vulkan_frames = { 0 };
+     Loading loading = { 0 };
+-    ps5log_config log_config;
+     PwPadPs5Ops pad_ops;
+     int status, video_status = PW_ERR_STATE, pad_status = PW_ERR_STATE, hid_status = PW_ERR_STATE;
+     uint64_t close_requested = 0, combo_ticks = 0, started = now_ns();
+-    PwRemoteControl remote;
+-    int remote_fed = 0;
+ 
+-    ps5log_config_defaults(&log_config);
+-    if (ps5log_load_config(ps5log_default_conf_paths, ps5log_default_conf_path_count,
+-                           &log_config, NULL) == 0)
+-        ps5log_init(&log_config, PW_TITLE_ID, PW_APP_NAME, now_ns());
+     pw_hid_ps5_preload(hid_log);   /* before the /data grant changes the title's credentials */
+     pw_osk_ps5_preload(osk_log);   /* the dialog's module is a system module too */
+     if (open_library() != 0) {
+         PS5LOG_LOG("PW_WINE64 startup blocked reason=data-helper-incomplete");
+-        ps5log_close("data-helper-incomplete");
+         /* A returned main parks in the relocated entry. Close this title
+          * through the existing guarded Home path instead of hanging. */
+         leave_to_home("data-helper-incomplete");
+     }
+-    /* Maintenance is sampled once per process, after the data grant. */
+-    direct_maintenance = access("/data/prospero-win/blur-maintenance", F_OK) == 0;
+-    if (!direct_maintenance) {
+-        blur_launcher_screen();
+-        if (direct_init(&launch) != 0) leave_to_home("blur-direct-profile-invalid");
+-    } else {
+-        (void)pw_wine_launch_parse(argc, argv, catalog, catalog_count, &launch);
+-    }
+-    (void)pw_diagnostics_open(library_root, PW_BUILD_ID,
+-                              launch.app ? launch.app->id : "launcher", launch.cycle);
++    /* BLUR: the display, the first-start prefix and the launcher, then this
++     * start's profile (the launcher's, else the built-in one). */
++    blur_launcher_screen();
++    if (direct_init(&launch, blur_decision.action == BL_START_GAME ? blur_decision.profile_text : NULL) != 0)
++        leave_to_home("blur-direct-profile-invalid");
++    (void)pw_diagnostics_open_dir(logs_root, PW_BUILD_ID,
++                                  launch.app ? launch.app->id : "launcher", launch.cycle);
+     /* The package's own identity (title, APP_VER, commit), defined by
+      * scripts/build-app-ps4.sh, so every run is attributable from its log. */
+     PS5LOG_LOG("PW_WINE64 build_marker=%s", PW_BUILD_ID);
+     PS5LOG_LOG("PW_WINE64 args argc=%d mode=%s profile=%s cycle=%u refused=%u", argc,
+                launch.mode == PW_WINE_LAUNCH_GAME ? "game" : "launcher",
+                launch.app ? launch.app->id : "-", (unsigned)launch.cycle, launch.refused);
+-    if (launch.mode != PW_WINE_LAUNCH_GAME && single_program()) {
+-        /* A single-program title starts its profile as the launcher would. */
+-        for (uint32_t i = 0; i < catalog_count; i++)
+-            if (!strcmp(catalog[i].id, fixed_profile)) restart_title(&catalog[i], launch.cycle, "fixed-profile");
+-        PS5LOG_LOG("PW_WINE64 startup blocked reason=no-fixed-profile profile=%s", fixed_profile);
+-        ps5log_close("no-fixed-profile");
+-        return 1;
+-    }
+-    if (launch.mode != PW_WINE_LAUNCH_GAME) run_launcher();
++    (void)argv;
+     wine_argv[1] = launch.executable;
+-    /* The game's profile: its prefix, desktop, scaling and input. A bare
+-     * path= runs in the default prefix with nothing bound. */
++    /* The game's profile: desktop, scaling and input. The prefix is always
++     * <root>/prefix, the one the seed prepared. */
+     pw_game_input_init(&game_input);
+-    game = !direct_maintenance ? &direct_profile :
+-           (launch.app ? pw_wine_library_find(&library, launch.app->id) : NULL);
+-    pw_rc_init(&remote, library_root, "game", game ? game->app.id : "", started);
+-    {   /* Production: no file poll 5 times a second unless the control
+-         * switch file was there at start (test runs). */
+-        char rc_path[300];
+-        snprintf(rc_path, sizeof(rc_path), "%s/pw_remote_control", library_root);
+-        blur_remote_on = direct_maintenance || access(rc_path, F_OK) == 0;
+-    }
+-    if (game && strcmp(game->app.prefix, "default"))
+-        snprintf(prefix, sizeof(prefix), "%s/prefixes/%s", library_root, game->app.prefix);
+-    else
+-        snprintf(prefix, sizeof(prefix), "%s/prefix", library_root);
++    game = &direct_profile;
++    snprintf(prefix, sizeof(prefix), "%s/prefix", library_root);
+     snprintf(radv_cache, sizeof(radv_cache), "%s/cache/radv", library_root);
+     if (game) {
+         int input_status = pw_wine_library_input(game, library_root, &game_input);
+@@ -1809,13 +2270,7 @@
+             extra[config.extra_env_count++] = (PwWineStartEnv){ "SDL_JOYSTICK_RAWINPUT", "0" };
+         /* [runtime]: opt-in runtime settings for this game. */
+         {
+-            if (access("/data/prospero-win/mprotect-nocache", F_OK) == 0) {
+-                extra[config.extra_env_count++] =
+-                    (PwWineStartEnv){ "PW_PS4_MPROTECT_TRUST_CACHE", "0" };
+-                PS5LOG_LOG("PW_WINE64 mprotect_trust_cache=0 (marker file)");
+-            } else {
+-                PS5LOG_LOG("PW_WINE64 mprotect_trust_cache=1 (default)");
+-            }
++            /* BLUR: no mprotect-nocache marker; the trust cache stays on (default). */
+ 
+             PwGameEnv runtime_env[PW_GAME_RUNTIME_ENV_MAX];
+             size_t runtime_count = pw_game_runtime_env(&game->runtime, runtime_env);
+@@ -1888,9 +2343,10 @@
+                 strcat(names, debug_env[i].name);
+             }
+             if (debug_count) PS5LOG_LOG("PW_WINE64 debug_env=%s", names);
+-            if (!direct_maintenance && blur_decision.action == BL_START_GAME)
++            if (blur_decision.action == BL_START_GAME &&
+                 blur_apply_decision(extra, &config.extra_env_count,
+-                                    sizeof(extra) / sizeof(extra[0]) - 4);   /* room for the title's later lines */
++                                    BLUR_ENV_CAPACITY) != 0)   /* BLUR_ENV_AFTER left for the title's later lines */
++                blur_env_refused();                                       /* fail closed: does not return */
+             {
+                 int seventh = 0;
+                 for (size_t i = 0; i < debug_count; i++)
+@@ -1924,16 +2380,6 @@
+         /* ⚠ Not setenv(): the title and ntdll.prx each have a private
+          * environ on the PS4, so only extra[] (pw_ps4_setenv) reaches Wine
+          * (archive 0039/0070/0073). */
+-        if (PW_WINE64_WAIT_WATCHDOG)
+-            extra[config.extra_env_count++] = (PwWineStartEnv){ "WINE_PS5_WAIT_WATCHDOG", "1" };
+-        if (PW_WINE64_HEAP_FLEXIBLE) {
+-            extra[config.extra_env_count++] = (PwWineStartEnv){ "WINE_PS5_HEAP_FLEXIBLE", "1" };
+-            PS5LOG_LOG("PW_WINE64 heap_direct=0 (anonymous mmap control)");
+-        }
+-        if (PW_WINE64_SERVER_DIRECT_OFF) {
+-            extra[config.extra_env_count++] = (PwWineStartEnv){ "WINE_PS5_SERVER_DIRECT", "0" };
+-            PS5LOG_LOG("PW_WINE64 server_direct=0 (regular server thread)");
+-        }
+ #ifdef __PS4__
+         {
+             /* Wine's NSI device does not exist here, so iphlpapi (series
+@@ -1999,6 +2445,9 @@
+             (uintptr_t)pw_prx_lookup(start.descriptor, "__wine_ps5_set_output_sink");
+         PS5LOG_LOG("PW_WINE64 output_sink=%d", set_sink != NULL);
+         if (set_sink) set_sink(wine_output_sink);
++        PS5LOG_LOG("PW_WINE64 dl_report=%d", blur_install_dl_report(
++                   (void (*)(const PwWineDlOps *, const char *))(uintptr_t)
++                   pw_prx_lookup(start.descriptor, "pw_wine_dl_configure"), getenv("WINE_PRX_DIR")));
+         void (*set_present)(PwWinePresentSink, void *) = (void (*)(PwWinePresentSink, void *))
+             (uintptr_t)pw_prx_lookup(start.descriptor, "pw_wine_set_present_sink");
+         post_input = (int (*)(const PwWineInput *))
+@@ -2095,22 +2544,19 @@
+             PS5LOG_LOG("PW_WINE64 cwd=%s host=%s status=%d", game->app.working_directory,
+                        mapped == 0 ? host_dir : "-", cwd_status);
+         }
+-        /* N280_NAME_BEGIN: every game phase obtains a compatible local or
+-         * persisted/entered per-user name, or stays on an explicit setup page.
+-         * Never start Wine with a silent empty game-mode override. */
+-        memset(&blur_display_name, 0, sizeof(blur_display_name));
+-        blur_display_name.user_id=-1;
+-        /* This is already the game phase. Maintenance only holds the
+-         * pre-launch chooser; every launched profile uses the same name. */
+-        (void)pw_blur_name_from_orbis(NULL,0,&blur_display_name);
+-        direct_player_name_setup(&blur_display_name,&osk_ps5,&video,video_status,0);
++        /* N280_NAME_BEGIN: the game display name is the PS4 local user name,
++         * made portable when it is not (audit finding 4); the system keyboard
++         * is never opened and nothing waits for a typed name. The online
++         * account is AMAX's, untouched here. */
++        int name_sanitized = 1;
++        int name_local = pw_blur100_display_name_from_orbis(&blur_display_name, &name_sanitized);
+         if (pw_blur_name_export(extra,&config.extra_env_count,
+                                 sizeof(extra)/sizeof(extra[0]),blur_display_name.utf8))
+             status=PW_ERR_PRECONDITION;
+         else
+             status=pw_wine_start_environment(&start,&config,&ops);
+-        PS5LOG_LOG("PW_WINE64 display_name source=%s bytes=%u default_only=1",
+-                   blur_display_name.source==PW_BLUR_NAME_LOCAL?"local-ps4":"saved-or-entered",
++        PS5LOG_LOG("PW_WINE64 display_name source=%s sanitized=%d bytes=%u",
++                   name_local ? "local-ps4" : "default", name_sanitized,
+                    (unsigned)blur_display_name.bytes);
+         /* N280_NAME_END */
+         PS5LOG_LOG("PW_WINE64 environment status=%d", status);
+@@ -2128,13 +2574,6 @@
+         status = pw_wine_start_run(&start, &config, &ops);
+         PS5LOG_LOG("PW_WINE64 run status=%d", status);
+     }
+-#if PW_WINE64_SCRIPT
+-    const uint64_t script_start_ns = now_ns();
+-    script_keys_load(library_root);
+-    script_input_load(library_root);
+-    if (script_input.pad_events && !set_pad)
+-        PS5LOG_LOG("PW_WINE64 script pad events ignored: the profile's [input] mode is not xinput");
+-#endif
+     for (uint64_t tick = 1; status == PW_OK; tick++) {
+         uint64_t now = now_ns();
+         pw_diagnostics_tick(now);
+@@ -2177,45 +2616,6 @@
+                 else refused++;
+             }
+         }
+-#if PW_WINE64_SCRIPT
+-        while (post_input && script_key_next < script_key_count &&
+-               now - script_start_ns >= script_keys[script_key_next].at_ns) {
+-            PwWineInput press = { PW_WINE_INPUT_KEY, script_keys[script_key_next].vk, 0, 0, 1 };
+-            PwWineInput release = press;
+-            release.down = 0;
+-            int pressed = post_input(&press), released = post_input(&release);
+-            PS5LOG_LOG("PW_WINE64 script key=%#x status=%d/%d", (unsigned)press.code, pressed, released);
+-            script_key_next++;
+-        }
+-        if (post_input && script_input_next < script_input.count) {
+-            uint16_t pad_changed = 0; /* a button changes at most once a frame */
+-
+-            if (!script_input_start_ns && tick % (PW_WINE64_TICKS_PER_S / 2) == 0) script_input_poll_sync(now);
+-            while (script_input_start_ns && script_input_next < script_input.count &&
+-                   now - script_input_start_ns >= (uint64_t)script_input.events[script_input_next].at_ms * 1000000u) {
+-                const PwScriptInputEvent *event = &script_input.events[script_input_next];
+-                uint16_t held = script_pad.buttons;
+-                int pad_event = pw_script_pad_apply(&script_pad, event, &pad_changed);
+-
+-                if (pad_event < 0) break; /* next frame, after the game saw this one */
+-                script_input_next++;
+-                if (pad_event) {
+-                    if (held != script_pad.buttons)
+-                        PS5LOG_LOG("PW_WINE64 script pad buttons=%#x at_ms=%u", (unsigned)script_pad.buttons,
+-                                   (unsigned)event->at_ms);
+-                } else {
+-                    PwWineInput input = { event->kind == PW_SCRIPT_INPUT_KEY ? PW_WINE_INPUT_KEY :
+-                                          event->kind == PW_SCRIPT_INPUT_BUTTON ? PW_WINE_INPUT_MOUSE_BUTTON :
+-                                          PW_WINE_INPUT_MOUSE_MOVE, event->code, event->dx, event->dy, event->down };
+-                    if (post_input(&input) == 0) posted++;
+-                    else refused++;
+-                }
+-                if (script_input_next == script_input.count || script_input_next % 2000 == 0)
+-                    PS5LOG_LOG("PW_WINE64 script input replayed=%u of %u", (unsigned)script_input_next,
+-                               (unsigned)script_input.count);
+-            }
+-        }
+-#endif
+         int pad_read = pad_status == PW_OK && post_input && pw_pad_ps5_read(&pad) == PW_OK;
+         if (pad_read) {
+             static int pad_state = -1;
+@@ -2272,50 +2672,10 @@
+         /* XInput controller 0: the DualSense, and in a script build the
+          * macro's controller added to it, every frame, so a scripted press
+          * stays down until its release. */
+-        int remote_action = blur_remote_on ? pw_rc_poll(&remote, now) : PW_RC_NONE;
+-        int remote_blocked = menu_open || (pad_read && pad.intercepted) || osk_ps5.showing;
+-        if (remote_action == PW_RC_PAD && (!set_pad || remote_blocked)) {
+-            pw_rc_release(&remote);
+-            (void)pw_rc_ack(&remote, !set_pad ? "no_xinput_sink" : "intercepted");
+-        } else if (remote_action == PW_RC_CLOSE && !post_input) {
+-            (void)pw_rc_ack(&remote, "no_input_sink");
+-            remote_action = PW_RC_NONE;
+-        }
+-        if (remote_blocked) pw_rc_release(&remote);
+         if (set_pad) {
+             PwWinePad state;
+             int connected = pw_wine_game_pad(pad_read ? seen : NULL, &state), scripted = 0;
+-#if PW_WINE64_SCRIPT
+-            scripted = script_input.pad_events != 0;
+-            connected = pw_wine_script_pad(&state, connected, &script_pad, scripted);
+-#endif
+-            int remote_held = remote.expires != 0;
+-            if (remote_held) {
+-                if (!connected) memset(&state, 0, sizeof(state));
+-                state.connected = 1; connected = 1;
+-                state.buttons |= (uint16_t)remote.buttons;
+-                if (remote.lt > state.left_trigger) state.left_trigger = (uint8_t)remote.lt;
+-                if (remote.rt > state.right_trigger) state.right_trigger = (uint8_t)remote.rt;
+-                if (remote.lx || remote.ly) { state.thumb_lx=(int16_t)remote.lx; state.thumb_ly=(int16_t)remote.ly; }
+-                if (remote.rx || remote.ry) { state.thumb_rx=(int16_t)remote.rx; state.thumb_ry=(int16_t)remote.ry; }
+-            }
+-            if (pad_read || scripted || remote_held || remote_fed) set_pad(connected ? &state : NULL);
+-            remote_fed = remote_held;
+-        }
+-        if ((remote_action == PW_RC_PAD && set_pad && !remote_blocked) || remote_action == PW_RC_RELEASE) {
+-            /* This receipt follows the void native sink call, not merely parsing. */
+-            if (!pw_rc_ack(&remote, "accepted")) {
+-                pw_rc_release(&remote);
+-                if (set_pad) {
+-                    PwWinePad physical;
+-                    int connected = pw_wine_game_pad(pad_read ? seen : NULL, &physical);
+-#if PW_WINE64_SCRIPT
+-                    connected = pw_wine_script_pad(&physical, connected, &script_pad, script_input.pad_events != 0);
+-#endif
+-                    set_pad(connected ? &physical : NULL);
+-                }
+-                remote_fed = 0;
+-            } else PS5LOG_LOG("PW_CONTROL session=%s seq=%u action=%d submitted=1", remote.session, remote.seq, remote_action);
++            if (pad_read || scripted) set_pad(connected ? &state : NULL);
+         }
+         /* XInput controllers 1..3: the other signed-in users' DualSenses,
+          * each with its own rumble, once the game has asked xinput for one
+@@ -2382,28 +2742,6 @@
+                                                  key_stick != NULL, &keyboard_stick_state,
+                                                  &events[count],
+                                                  sizeof(events) / sizeof(events[0]) - count - 1);
+-            /* Bounded: the first 40 deflections or emitted transitions. Says
+-             * whether the setting is live, whether stick values arrive, and
+-             * whether the step turned them into keys. */
+-            {
+-                static unsigned stick_logs, stick_frames;
+-                int deflected = key_stick && (key_stick->x < 0x60 || key_stick->x > 0xa0 ||
+-                                              key_stick->y < 0x60 || key_stick->y > 0xa0);
+-                /* 1049: also sample unconditionally -- the first 10 frames and
+-                 * every 120th after -- so a silent run still says whether the
+-                 * setting is live and what the axes actually read. */
+-                int sampled = stick_frames < 10 || stick_frames % 120 == 0;
+-                stick_frames++;
+-                if ((deflected || count != before_stick || sampled) && stick_logs < 60) {
+-                    stick_logs++;
+-                    PS5LOG_LOG("PW_WINE64 stick n=%u setting=%d x=%#x y=%#x dead=%u held=%#x events=%u",
+-                               stick_logs, (int)game_input.keyboard_stick,
+-                               key_stick ? key_stick->x : 0x80, key_stick ? key_stick->y : 0x80,
+-                               (unsigned)game_input.stick_deadzone,
+-                               (unsigned)keyboard_stick_state.held,
+-                               (unsigned)(count - before_stick));
+-                }
+-            }
+             if (game_input.mouse == PW_GAME_STICK_TOUCHPAD) {
+                 count += (size_t)pw_wine_touch_pointer_step(&pointer, pad.finger_down != 0,
+                                                             pad.finger_x, pad.finger_y,
+@@ -2554,6 +2892,7 @@
+             }
+             if (guest_exit_pending && guest_exit_pending()) {
+                 PS5LOG_LOG("PW_WINE64 guest processes ended: returning to launcher");
++                blur_session_end();    /* T12: a Quit after the first frame is a normal end */
+                 restart_title(NULL, launch.cycle + 1u, "guest-exit");
+             }
+         }
+@@ -2573,11 +2912,8 @@
+                        pad.touch_left ? "left" : "right");
+         combo_ticks = pad_status == PW_OK && (pad.core.previous_buttons & PAD_CLOSE) == PAD_CLOSE ?
+                       combo_ticks + 1 : 0;
+-        if (remote_action == PW_RC_CLOSE && close_requested)
+-            (void)pw_rc_ack(&remote, "already_closing");
+         if (!close_requested &&
+-            (remote_action == PW_RC_CLOSE || combo_ticks >= PW_WINE64_CLOSE_HOLD_S * PW_WINE64_TICKS_PER_S ||
+-             (PW_WINE64_SECONDS && now - started >= (uint64_t)PW_WINE64_SECONDS * 1000000000u))) {
++            combo_ticks >= PW_WINE64_CLOSE_HOLD_S * PW_WINE64_TICKS_PER_S) {
+             static const PwWineInput alt_f4[] = {
+                 { PW_WINE_INPUT_KEY, 0x12, 0, 0, 1 }, { PW_WINE_INPUT_KEY, 0x73, 0, 0, 1 },
+                 { PW_WINE_INPUT_KEY, 0x73, 0, 0, 0 }, { PW_WINE_INPUT_KEY, 0x12, 0, 0, 0 },
+@@ -2589,9 +2925,7 @@
+             int close_post_failed = 0;
+             for (size_t i = 0; post_input && i < sizeof(alt_f4) / sizeof(alt_f4[0]); i++)
+                 close_post_failed |= post_input(&alt_f4[i]) != 0;
+-            if (remote_action == PW_RC_CLOSE)
+-                (void)pw_rc_ack(&remote, close_post_failed ? "close_post_failed" : "accepted");
+-            PS5LOG_LOG("PW_WINE64 close requested by=%s", remote_action == PW_RC_CLOSE ? "remote" : combo_ticks ? "combo" : "deadline");
++            PS5LOG_LOG("PW_WINE64 close requested by=%s close_post_failed=%d", combo_ticks ? "combo" : "deadline", close_post_failed);
+         }
+         if (close_requested && now - close_requested >= (uint64_t)PW_WINE64_CLOSE_WAIT_S * 1000000000u) {
+             PS5LOG_LOG("PW_WINE64 close timeout: leaving the game");
+@@ -2647,7 +2981,7 @@
+                     faults_logged = v[5];
+                 }
+             }
+-            if (tick % 30 == 0) {
++            if (blur_logs_verbose && tick % 30 == 0) {
+                 static int holders_logged;
+                 size_t flexible = 0;
+ 
+diff -ruN base/prospero/src/pw_game_menu.c r4/prospero/src/pw_game_menu.c
+--- base/prospero/src/pw_game_menu.c
++++ r4/prospero/src/pw_game_menu.c
+@@ -45,7 +45,7 @@
+     snapshot->open = 1;
+     snapshot->lines = LINE_COUNT;
+     snapshot->selected = menu->cursor;
+-    strcpy(snapshot->title, "prospero-win");
++    strcpy(snapshot->title, "JkFlow");
+     for (int i = 0; i < LINE_COUNT; i++) strcpy(snapshot->line[i], lines_of(menu)[i].text);
+ }
+ 
+diff -ruN base/prospero/src/pw_game_profile.c r4/prospero/src/pw_game_profile.c
+--- base/prospero/src/pw_game_profile.c
++++ r4/prospero/src/pw_game_profile.c
+@@ -518,7 +518,7 @@
+      * profile inherits whatever CPU DLL its prefix registered under
+      * HKLM\Software\Microsoft\Wow64\x86 -- Wine's stock wow64cpu.dll in a
+      * fresh prefix, which cannot run on the PS4 (MDK, 2026-11-05). */
+-    env[0] = (PwGameEnv){ "WINE_PS5_WOW64_CPU", native ? "wow64native.dll" : "wowprospero.dll" };
++    env[0] = (PwGameEnv){ "WINE_PS5_WOW64_CPU", native ? "wow64native.dll" : "wowblur.dll" };
+     if (!native) return 1;
+     /* The native CPU never runs without the Vulkan batching. */
+     env[1] = (PwGameEnv){ "PW_VK_BATCH", "1" };
+diff -ruN base/prospero/src/pw_launcher_render.c r4/prospero/src/pw_launcher_render.c
+--- base/prospero/src/pw_launcher_render.c
++++ r4/prospero/src/pw_launcher_render.c
+@@ -332,7 +332,7 @@
+ int pw_blur_missing_render(const PwPresentTarget *target)
+ {
+     static const char *const lines[] = {
+-        "Blur not found.", "Copy your own game to /data/Pc/Blur,", "then restart the app."
++        "Blur not found.", "Copy your own Blur folder to /data/JkFlow/Blur,", "then restart the app."
+     };
+     if (!target || !target->pixels) return PW_ERR_PRECONDITION;
+     if (target->width != W || target->height != H || target->stride < (uint32_t)W*4u ||
+@@ -369,11 +369,11 @@
+ int pw_blur_start_render(const PwPresentTarget *target, int state)
+ {
+     static const char *const missing[] = {
+-        "Blur not found.", "Copy your own game to /data/Pc/Blur,", "then restart the app."
++        "Blur not found.", "Copy your own Blur folder to /data/JkFlow/Blur,", "then restart the app."
+     };
+     static const char ready[] = "Press X to start";
+     static const char *const wrong[] = {
+-        "This Blur.exe is not the supported version.", "Copy the supported game to /data/Pc/Blur,", "then restart the app."
++        "This Blur.exe has not been tested.", "Copy your own Blur folder to /data/JkFlow/Blur,", "then restart the app."
+     };
+     static const char *const failed[] = {
+         "Required Blur files could not be installed.", "Free some storage space and restart the app."
+@@ -425,19 +425,3 @@
+     return 0;
+ }
+ 
+-/* First-entry setup only: no library grid or launch confirmation. */
+-int pw_blur_name_setup_render(const PwPresentTarget *target,const char *message,int stopped)
+-{
+-    if(!target || !target->pixels)return PW_ERR_PRECONDITION;
+-    if(target->width!=W || target->height!=H || target->stride<(uint32_t)W*4u || target->stride%4u ||
+-       (uint64_t)target->stride*H>target->bytes)return PW_ERR_MALFORMED;
+-    const Canvas canvas={target->pixels,target->stride};
+-    fill(&canvas,0,0,W,H,rgb(0,0,0));
+-    const char *lines[]={"Blur player name",message?message:"Choose your player name.",
+-        stopped?"Restart the app to try again.":"Use A-Z, 0-9, dot, underscore or hyphen (1-16)."};
+-    for(unsigned i=0;i<3;++i) {
+-        int scale=i==0?6:4;
+-        direct_text(&canvas,(W-text_width(lines[i],scale))/2,380+(int32_t)i*100,lines[i],scale);
+-    }
+-    return PW_OK;
+-}
+diff -ruN base/prospero/src/pw_present.c r4/prospero/src/pw_present.c
+--- base/prospero/src/pw_present.c
++++ r4/prospero/src/pw_present.c
+@@ -1,6 +1,9 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+ #include "pw_present.h"
+ #include <string.h>
++#ifdef __SSE2__
++#include <emmintrin.h>
++#endif
+ 
+ int pw_present_frame_from_view(const PwPresentView *view,PwPresentFrame *frame)
+ {
+@@ -39,9 +42,36 @@
+         scale,shown_w,shown_h};
+     return PW_OK;
+ }
+-static void store_opaque(uint8_t *out,uint32_t bgrx)
+-{
+-    out[0]=(uint8_t)bgrx;out[1]=(uint8_t)(bgrx>>8);out[2]=(uint8_t)(bgrx>>16);out[3]=0xff;
++/* Rows go out as whole 32-bit pixels (aligned 16-byte stores with SSE2),
++ * never byte by byte: the PS4 scanout is write-combined memory, written
++ * once and only read by the display, and the launcher presents 1920x1080
++ * every frame (BLUR 1.00 owner finding 34: 18.4 ms on the host for the
++ * byte-wise fill and copy with a division per pixel). The bytes are the
++ * same: B,G,R from the source, 0xff alpha (little-endian stores). */
++static inline void store32(uint8_t *out,uint32_t v){memcpy(out,&v,4);}
++static inline uint32_t load32(const uint8_t *in){uint32_t v;memcpy(&v,in,4);return v;}
++static void fill_opaque(uint8_t *out,uint32_t count,uint32_t bgrx)
++{
++    uint32_t v=bgrx|0xff000000u,i=0;
++#ifdef __SSE2__
++    for(;i<count && ((uintptr_t)(out+(uint64_t)i*4u)&15u);i++)store32(out+(uint64_t)i*4u,v);
++    const __m128i w=_mm_set1_epi32((int)v);
++    for(;i+4<=count;i+=4)_mm_storeu_si128((__m128i *)(void *)(out+(uint64_t)i*4u),w);
++#endif
++    for(;i<count;i++)store32(out+(uint64_t)i*4u,v);
++}
++static void copy_opaque(uint8_t *out,const uint8_t *in,uint32_t count)
++{
++    uint32_t i=0;
++#ifdef __SSE2__
++    for(;i<count && ((uintptr_t)(out+(uint64_t)i*4u)&15u);i++)
++        store32(out+(uint64_t)i*4u,load32(in+(uint64_t)i*4u)|0xff000000u);
++    const __m128i alpha=_mm_set1_epi32((int)0xff000000u);
++    for(;i+4<=count;i+=4)
++        _mm_storeu_si128((__m128i *)(void *)(out+(uint64_t)i*4u),
++                         _mm_or_si128(_mm_loadu_si128((const __m128i *)(const void *)(in+(uint64_t)i*4u)),alpha));
++#endif
++    for(;i<count;i++)store32(out+(uint64_t)i*4u,load32(in+(uint64_t)i*4u)|0xff000000u);
+ }
+ int pw_present_compose(const PwPresentFrame *frame,const PwPresentPlacement *placement,
+                        uint32_t background,const PwPresentTarget *target)
+@@ -59,18 +89,25 @@
+        placement->left>target->width || placement->shown_width>target->width-placement->left ||
+        placement->top>target->height || placement->shown_height>target->height-placement->top)
+         return PW_ERR_LIMIT;
++    /* One pass, each target pixel written once: the background only where
++     * the frame does not cover (nothing at 1:1 full screen), no division
++     * per pixel (scale k repeats each source pixel k times). */
++    const uint32_t scale=placement->scale,left=placement->left,shown_w=placement->shown_width;
++    const uint32_t right=target->width-left-shown_w;
+     for(uint32_t y=0;y<target->height;y++) {
+         uint8_t *row=target->pixels+(uint64_t)y*target->stride;
+-        for(uint32_t x=0;x<target->width;x++)store_opaque(row+(uint64_t)x*4u,background);
+-    }
+-    for(uint32_t y=0;y<placement->shown_height;y++) {
+-        const uint8_t *source=frame->pixels+(uint64_t)(y/placement->scale)*frame->stride;
+-        uint8_t *row=target->pixels+(uint64_t)(placement->top+y)*target->stride+
+-            (uint64_t)placement->left*4u;
+-        for(uint32_t x=0;x<placement->shown_width;x++) {
+-            const uint8_t *pixel=source+(uint64_t)(x/placement->scale)*4u;
+-            row[x*4u]=pixel[0];row[x*4u+1]=pixel[1];row[x*4u+2]=pixel[2];row[x*4u+3]=0xff;
++        if(y<placement->top || y-placement->top>=placement->shown_height) {
++            fill_opaque(row,target->width,background);continue;
+         }
++        const uint8_t *source=frame->pixels+(uint64_t)((y-placement->top)/scale)*frame->stride;
++        fill_opaque(row,left,background);
++        uint8_t *out=row+(uint64_t)left*4u;
++        if(scale==1)copy_opaque(out,source,shown_w);
++        else for(uint32_t x=0;x<frame->width;x++) {
++            uint32_t v=load32(source+(uint64_t)x*4u)|0xff000000u;
++            for(uint32_t k=0;k<scale;k++,out+=4)store32(out,v);
++        }
++        fill_opaque(row+((uint64_t)left+shown_w)*4u,right,background);
+     }
+     return PW_OK;
+ }
+@@ -122,23 +159,26 @@
+     for(uint32_t y=0;y<target->height;y++) {
+         uint8_t *row=target->pixels+(uint64_t)y*target->stride;
+         if(y<shown.top || y>=shown.top+shown.shown_height) {
+-            for(uint32_t x=0;x<target->width;x++)store_opaque(row+(uint64_t)x*4u,background);
++            fill_opaque(row,target->width,background);
+             continue;
+         }
+         const uint8_t *source=frame->pixels+
+             (uint64_t)(y-shown.top)*frame->height/shown.shown_height*frame->stride;
+-        for(uint32_t x=0;x<shown.left;x++)store_opaque(row+(uint64_t)x*4u,background);
+-        /* Source column floor(i*width/shown_width), stepped without dividing. */
+-        uint32_t sx=0,remainder=0;
++        fill_opaque(row,shown.left,background);
+         uint8_t *out=row+(uint64_t)shown.left*4u;
+-        for(uint32_t i=0;i<shown.shown_width;i++,out+=4) {
+-            const uint8_t *pixel=source+(uint64_t)sx*4u;
+-            out[0]=pixel[0];out[1]=pixel[1];out[2]=pixel[2];out[3]=0xff;
+-            remainder+=frame->width;
+-            while(remainder>=shown.shown_width){remainder-=shown.shown_width;sx++;}
++        if(shown.shown_width==frame->width) {
++            copy_opaque(out,source,shown.shown_width);
++        } else {
++            /* Source column floor(i*width/shown_width), stepped without dividing. */
++            uint32_t sx=0,remainder=0;
++            for(uint32_t i=0;i<shown.shown_width;i++,out+=4) {
++                store32(out,load32(source+(uint64_t)sx*4u)|0xff000000u);
++                remainder+=frame->width;
++                while(remainder>=shown.shown_width){remainder-=shown.shown_width;sx++;}
++            }
+         }
+-        for(uint32_t x=shown.left+shown.shown_width;x<target->width;x++)
+-            store_opaque(row+(uint64_t)x*4u,background);
++        fill_opaque(row+((uint64_t)shown.left+shown.shown_width)*4u,
++                    target->width-shown.left-shown.shown_width,background);
+     }
+     if(placement)*placement=shown;
+     return PW_OK;
+diff -ruN base/prospero/src/pw_profile_catalog.c r4/prospero/src/pw_profile_catalog.c
+--- base/prospero/src/pw_profile_catalog.c
++++ r4/prospero/src/pw_profile_catalog.c
+@@ -43,6 +43,6 @@
+ 
+ int pw_profile_catalog_launchable(const PwAppProfile *profile)
+ {
+-    return profile && !strcmp(profile->runtime,"prospero-win-direct") &&
++    return profile && !strcmp(profile->runtime,"blur-direct") &&
+         profile->architecture==PW_APP_ARCH_PE32 && profile->graphics==PW_APP_GRAPHICS_GDI;
+ }
+diff -ruN base/prospero/src/pw_wine_start.h r4/prospero/src/pw_wine_start.h
+--- base/prospero/src/pw_wine_start.h
++++ r4/prospero/src/pw_wine_start.h
+@@ -18,7 +18,9 @@
+ #include "pw_wine_launch.h"
+ 
+ enum {
+-    PW_WINE_START_MAX_ENV = 31,  /* +1: stable Blur display-name entry */
++    /* BLUR 1.00 (audit finding 7): the title's 48 lines up to the launcher's,
++     * then NETCFG and the display name (wine64_main.c BLUR_ENV_CAPACITY). */
++    PW_WINE_START_MAX_ENV = 52,
+     /* wine, the executable and every word a profile's arguments may split into */
+     PW_WINE_START_MAX_ARGS = 2 + PW_WINE_LAUNCH_WORDS,
+     /* Stages, reported so a failed start names where it stopped. */
+diff -ruN base/prospero/src/pw_x86_block.c r4/prospero/src/pw_x86_block.c
+--- base/prospero/src/pw_x86_block.c
++++ r4/prospero/src/pw_x86_block.c
+@@ -15,7 +15,7 @@
+ extern void pw_wow_log( const char *format, ... );
+ #define PW_VM_NOTE(tag) do { \
+         static int pw_vm_left = 4; \
+-        if (pw_vm_left > 0) { pw_vm_left--; pw_wow_log( "wowprospero: PW_ERR_VM at %s\n", tag ); } \
++        if (pw_vm_left > 0) { pw_vm_left--; pw_wow_log( "wowblur: PW_ERR_VM at %s\n", tag ); } \
+     } while (0)
+ #else
+ #define PW_VM_NOTE(tag) ((void)0)
+diff -ruN base/prospero/src/pw_x86_engine.c r4/prospero/src/pw_x86_engine.c
+--- base/prospero/src/pw_x86_engine.c
++++ r4/prospero/src/pw_x86_engine.c
+@@ -16,7 +16,7 @@
+ extern void pw_wow_log( const char *format, ... );
+ #define PW_VM_NOTE(tag) do { \
+         static int pw_vm_left = 4; \
+-        if (pw_vm_left > 0) { pw_vm_left--; pw_wow_log( "wowprospero: PW_ERR_VM at %s\n", tag ); } \
++        if (pw_vm_left > 0) { pw_vm_left--; pw_wow_log( "wowblur: PW_ERR_VM at %s\n", tag ); } \
+     } while (0)
+ #else
+ #define PW_VM_NOTE(tag) ((void)0)
+@@ -992,7 +992,7 @@
+ #ifdef __PROSPERO__
+         {
+             static int left = 8;
+-            if (left > 0) { left--; pw_wow_log( "wowprospero: invoke returned %d at guest eip %08x\n",
++            if (left > 0) { left--; pw_wow_log( "wowblur: invoke returned %d at guest eip %08x\n",
+                                                 invoked, (unsigned)state->eip ); }
+         }
+ #endif

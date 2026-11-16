@@ -1,0 +1,82 @@
+JkFlow 1.00 Wine PS4 runtime: win32u: performance-profile switch loader object (native250, JkFlow 1.00 path)
+
+Compiled on its own and linked into win32u.prx (see BUILD.md); not part of the Wine Makefile.
+
+ dlls/win32u/native250-performance-loader.c
+---
+diff --git a/dlls/win32u/native250-performance-loader.c b/dlls/win32u/native250-performance-loader.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/win32u/native250-performance-loader.c
+@@ -0,0 +1,71 @@
++/* Private win32u link adapter. Keep the official PS4 Vulkan PRX unchanged. */
++#define _POSIX_C_SOURCE 200809L
++#include <vulkan/vulkan.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "pw_vk_radv_profile_wrap.h"
++
++extern void *__real_dlopen(const char *name, int flags);
++extern void *__real_dlsym(void *handle, const char *name);
++static void *driver_handle;
++static PFN_vkGetInstanceProcAddr driver_instance;
++static PFN_vkGetDeviceProcAddr driver_device;
++
++static PFN_vkVoidFunction VKAPI_CALL profile_instance(VkInstance instance, const char *name)
++{
++    return pw_vk_radv_profile_resolve(name, driver_instance(instance, name));
++}
++
++static PFN_vkVoidFunction VKAPI_CALL profile_device(VkDevice device, const char *name)
++{
++    return pw_vk_radv_profile_resolve(name, driver_device(device, name));
++}
++
++void *__wrap_dlopen(const char *name, int flags)
++{
++    void *handle = __real_dlopen(name, flags);
++    const char *base = name ? strrchr(name, '/') : NULL;
++    base = base ? base + 1 : name;
++    if (handle && base && (!strcmp(base, "libvulkan.so") ||
++                          !strcmp(base, "libvulkan.so.1") || !strcmp(base, "libvulkan.prx")))
++        driver_handle = handle;
++    return handle;
++}
++
++void *__wrap_dlsym(void *handle, const char *name)
++{
++    void *real = __real_dlsym(handle, name);
++    if (!real || !driver_handle || handle != driver_handle || !name) return real;
++    if (!strcmp(name, "vkGetInstanceProcAddr"))
++    {
++        driver_instance = (PFN_vkGetInstanceProcAddr)real;
++        return (void *)profile_instance;
++    }
++    if (!strcmp(name, "vkGetDeviceProcAddr"))
++    {
++        driver_device = (PFN_vkGetDeviceProcAddr)real;
++        return (void *)profile_device;
++    }
++    return real;
++}
++
++/* Only the upstream profiling wrapper uses this override. A one-byte file
++ * selects the on/off arm before the wrapper resolves any Vulkan pointers;
++ * the normal game/native-profile environment remains authoritative otherwise.
++ * No file means unmodified upstream getenv behavior. Change between launches. */
++char *pw_native250_profile_getenv(const char *name)
++{
++    if (!strcmp(name, "PW_VK_RADV_PROFILE") || !strcmp(name, "PW_NATIVE_PROFILE"))
++    {
++        FILE *file = fopen("/data/blurdev/native250-performance.enable", "r");
++        if (file)
++        {
++            int mode = fgetc(file);
++            fclose(file);
++            if (mode == '1') return (char *)"1";
++            if (mode == '0') return (char *)"0";
++        }
++    }
++    return getenv(name);
++}

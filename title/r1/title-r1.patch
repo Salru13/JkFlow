@@ -1,0 +1,355 @@
+--- a/wine64_main.c
++++ b/wine64_main.c
+@@ -66,6 +66,10 @@
+ #include <time.h>
+ #include <unistd.h>
+ #include "pw_remote_control.h"
++/* Blur launcher UI (launcher/ on branch blur-launcher-ui): the start screen,
++ * patch blur, settings and the loader. */
++#include "bl_frontend.h"
++#include "bl_loader.h"
+ #include "native279-username.h"
+ #include "native279-username-env.h"
+ #include "native280-username-ui.h"
+@@ -127,7 +131,8 @@
+     "cpu = native\n"
+     "[debug]\n"
+     "winedebug = +tid,err+all,+loaddll\n"
+-    "env = PW_NATIVE_ALERT_UMTX=1\n";
++    "env = PW_NATIVE_ALERT_UMTX=1\n"
++    "env = DXVK_PS4_NATIVE=menu\n";
+ static PwGameProfile direct_profile;
+ static PwWineApp direct_app;
+ static int direct_single(int maintenance, int fixed) { return !maintenance || fixed; }
+@@ -584,11 +589,11 @@
+  * frames until then are not shown. Half a second passes first, so a game
+  * that is quick to show something never flashes it.
+  */
+-enum { PW_WINE64_SPINNER_DELAY_MS = 500, PW_WINE64_SPINNER_STEP_MS = 83,
++enum { PW_WINE64_SPINNER_DELAY_MS = 500, PW_WINE64_SPINNER_STEP_MS = 33,
+        PW_WINE64_PRESENTING_MS = 1000 };
+ typedef struct Loading {
+     int content;               /* the game has shown something */
+-    uint32_t *pixels;          /* PW_SPINNER_WIDTH x PW_SPINNER_HEIGHT */
++    uint32_t *pixels;          /* 1920 x 1080 BGRX: the launcher's loader */
+     uint32_t step;
+     uint64_t next_ns;
+     uint64_t presenting_since;  /* the Vulkan driver busy without a pause, or 0 */
+@@ -599,6 +604,7 @@
+ {
+     if (loading->content) return;
+     loading->content = 1;
++    bl_loader_release();
+     PS5LOG_LOG("PW_WINE64 loading done by=%s spinner_steps=%u", by, loading->step);
+ }
+ 
+@@ -610,7 +616,7 @@
+         now < loading->next_ns)
+         return NULL;
+     if (!loading->pixels) {
+-        void *pixels = mmap(NULL, (size_t)PW_SPINNER_WIDTH * PW_SPINNER_HEIGHT * 4,
++        void *pixels = mmap(NULL, (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4,
+                             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+         if (pixels == MAP_FAILED) {
+             loading_done(loading, "no-memory");
+@@ -618,11 +624,13 @@
+         }
+         loading->pixels = pixels;
+     }
+-    pw_spinner_draw(loading->pixels, PW_SPINNER_WIDTH, PW_SPINNER_HEIGHT, PW_SPINNER_WIDTH,
+-                    loading->step++);
++    BlFrame loader = { (uint8_t *)loading->pixels, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
++                       PW_LAUNCHER_RENDER_WIDTH * 4u };
++    bl_loader_draw(&loader, (now - started) / 1000000ull);
++    loading->step++;
+     loading->next_ns = now + PW_WINE64_SPINNER_STEP_MS * 1000000ull;
+-    *frame = (PwPresentFrame){ (const uint8_t *)loading->pixels, PW_SPINNER_WIDTH, PW_SPINNER_HEIGHT,
+-                               PW_SPINNER_WIDTH * 4, PW_PRESENT_BGRX8 };
++    *frame = (PwPresentFrame){ (const uint8_t *)loading->pixels, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
++                               PW_LAUNCHER_RENDER_WIDTH * 4u, PW_PRESENT_BGRX8 };
+     return frame;
+ }
+ 
+@@ -1143,77 +1151,11 @@
+     if (!ok) unlink(temp);
+     return ok;
+ }
+-/* The one supported Blur.exe. */
+-static const uint8_t direct_blur_sha256[32] = { 0xdb,0xa0,0x26,0x4b,0x78,0x08,0xa5,0xe3,0x8d,0x99,0xc8,0xc1,0x62,0xec,0xd7,0x1a,0xb0,0x6a,0x48,0xfb,0xc4,0x24,0xfe,0xb1,0xb9,0xa3,0xbc,0x1b,0xff,0x2f,0xbf,0x3f };
+-
+-static uint32_t sha_rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+-static void sha_block(uint32_t h[8], const uint8_t *p)
+-{
+-    static const uint32_t k[64] = {
+-        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+-        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+-        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+-        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+-        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+-        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+-        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+-    };
+-    uint32_t w[64], v[8];
+-    for (int i = 0; i < 16; i++)
+-        w[i] = (uint32_t)p[i*4] << 24 | (uint32_t)p[i*4+1] << 16 | (uint32_t)p[i*4+2] << 8 | p[i*4+3];
+-    for (int i = 16; i < 64; i++) {
+-        uint32_t s0 = sha_rotr(w[i-15],7) ^ sha_rotr(w[i-15],18) ^ (w[i-15] >> 3);
+-        uint32_t s1 = sha_rotr(w[i-2],17) ^ sha_rotr(w[i-2],19) ^ (w[i-2] >> 10);
+-        w[i] = w[i-16] + s0 + w[i-7] + s1;
+-    }
+-    memcpy(v, h, sizeof(v));
+-    for (int i = 0; i < 64; i++) {
+-        uint32_t t1 = v[7] + (sha_rotr(v[4],6) ^ sha_rotr(v[4],11) ^ sha_rotr(v[4],25)) +
+-                      ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+-        uint32_t t2 = (sha_rotr(v[0],2) ^ sha_rotr(v[0],13) ^ sha_rotr(v[0],22)) +
+-                      ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+-        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
+-        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
+-    }
+-    for (int i = 0; i < 8; i++) h[i] += v[i];
+-}
+-/* SHA-256 of a whole file; returns 1 on success. */
+-static int direct_file_sha256(const char *path, uint8_t out[32])
+-{
+-    static uint8_t chunk[65536];
+-    uint32_t h[8] = { 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19 };
+-    uint8_t tail[128];
+-    uint64_t total = 0;
+-    size_t used = 0;
+-    ssize_t got;
+-    int fd = open(path, O_RDONLY);
+-    if (fd < 0) return 0;
+-    while ((got = read(fd, chunk + used, sizeof(chunk) - used)) > 0) {
+-        size_t have = used + (size_t)got, off = 0;
+-        total += (uint64_t)got;
+-        for (; have - off >= 64; off += 64) sha_block(h, chunk + off);
+-        used = have - off;
+-        memmove(chunk, chunk + off, used);
+-    }
+-    close(fd);
+-    if (got < 0) return 0;
+-    memset(tail, 0, sizeof(tail));
+-    memcpy(tail, chunk, used);
+-    tail[used] = 0x80;
+-    size_t pad = used < 56 ? 64 : 128;
+-    for (int i = 0; i < 8; i++) tail[pad - 1 - (size_t)i] = (uint8_t)((total * 8) >> (8 * i));
+-    sha_block(h, tail);
+-    if (pad == 128) sha_block(h, tail + 64);
+-    for (int i = 0; i < 8; i++) {
+-        out[i*4] = (uint8_t)(h[i] >> 24); out[i*4+1] = (uint8_t)(h[i] >> 16);
+-        out[i*4+2] = (uint8_t)(h[i] >> 8); out[i*4+3] = (uint8_t)h[i];
+-    }
+-    return 1;
+-}
+ enum { DIRECT_GAME_MISSING = 0, DIRECT_GAME_OK = 1, DIRECT_INSTALL_FAILED = 2, DIRECT_GAME_WRONG = 3 };
+-/* Hashes again only when the file changes, so the page's polling stays cheap
+- * and a copy still in progress settles by itself. */
++/* Any copy of Blur is accepted (user decision 2026-11-13/14): Blur.exe only has
++ * to be a PE file and is never hashed. Checked again only when the file
++ * changes, so the page's polling stays cheap and a copy still in progress
++ * settles by itself. */
+ static int direct_game_state(void)
+ {
+     static off_t last_size = -1;
+@@ -1221,13 +1163,11 @@
+     static int last_state = DIRECT_GAME_MISSING;
+     static const char path[] = "/data/Pc/Blur/Blur.exe";
+     struct stat st;
+-    uint8_t digest[32];
+     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) { last_size = -1; return DIRECT_GAME_MISSING; }
+     if (st.st_size == last_size && st.st_mtime == last_time) return last_state;
+     last_size = st.st_size;
+     last_time = st.st_mtime;
+-    last_state = direct_game_file_ok(path) && direct_file_sha256(path, digest) &&
+-                 !memcmp(digest, direct_blur_sha256, sizeof(digest)) ? DIRECT_GAME_OK : DIRECT_GAME_WRONG;
++    last_state = direct_game_file_ok(path) ? DIRECT_GAME_OK : DIRECT_GAME_WRONG;
+     PS5LOG_LOG("PW_WINE64 Blur game check size=%lld state=%d", (long long)st.st_size, last_state);
+     return last_state;
+ }
+@@ -1265,6 +1205,166 @@
+     return !failed;
+ }
+ 
++/* ---- Blur launcher UI seam (launcher/INTEGRATION.md) -------------------- */
++
++typedef struct BlurHost {
++    PwVideoOutPs5 video;
++    PwPadPs5 pad;
++    PwPadPs5Ops pad_ops;
++    int pad_status, ops_ok;
++    uint64_t pad_tried;
++} BlurHost;
++
++static int blur_host_present(void *ctx, const BlFrame *f)
++{
++    BlurHost *h = ctx;
++    const PwPresentView view = { f->pixels, f->width, f->height, f->stride, f->stride * f->height };
++    int rc = pw_videoout_ps5_present(&h->video, &view);
++    (void)sceGnmSubmitDone();
++    return rc == PW_OK ? 0 : -1;
++}
++
++static int blur_host_pad(void *ctx, uint32_t *held, uint32_t *pressed)
++{
++    BlurHost *h = ctx;
++    *held = *pressed = 0;
++    if (h->pad_status != PW_OK) {
++        uint64_t now = now_ns();
++        /* No controller signed in yet: try again every 2 s. */
++        if (!h->ops_ok || now - h->pad_tried < 2000000000ull) return -1;
++        h->pad_tried = now;
++        h->pad_status = pw_pad_ps5_open(&h->pad, &h->pad_ops, pad_open_map,
++                                        sizeof(pad_open_map) / sizeof(pad_open_map[0]));
++        if (h->pad_status != PW_OK) return -1;
++    }
++    if (pw_pad_ps5_read(&h->pad) != PW_OK) return -1;
++    *held = h->pad.core.previous_buttons;
++    *pressed = h->pad.core.pressed_edges;
++    return 0;
++}
++
++static uint64_t blur_host_now(void *ctx) { (void)ctx; return now_ns(); }
++static void blur_host_sleep(void *ctx, uint32_t us) { (void)ctx; usleep(us); }
++
++static int blur_host_net(void *ctx, char *ipv4, size_t cap)
++{
++    (void)ctx;
++#ifdef __PS4__
++    extern int pw_ps4_netctl_config(char *buffer, size_t size);
++    char cfg[160] = "";
++    if (pw_ps4_netctl_config(cfg, sizeof(cfg)) == 0) {
++        size_t n = strcspn(cfg, ",");
++        if (n && n < cap && strncmp(cfg, "0.0.0.0", n)) {
++            memcpy(ipv4, cfg, n);
++            ipv4[n] = 0;
++            return 0;
++        }
++    }
++#else
++    (void)ipv4; (void)cap;
++#endif
++    return -1;
++}
++
++/* is_pro is left NULL ("unknown"): sceKernelIsNeoMode would be the title's only
++ * new import, and without model-pro.ini it changes nothing but a label. */
++
++/* Readiness when the package has no blur-files/ (then the patcher cannot
++ * decide): any Blur.exe that is a PE file. */
++static int blur_host_game_state(void *ctx)
++{
++    (void)ctx;
++    return direct_game_file_ok("/data/Pc/Blur/Blur.exe") ? BL_READY_OK : BL_READY_NO_GAME;
++}
++
++static void blur_host_log(void *ctx, const char *line)
++{
++    (void)ctx;
++    PS5LOG_LOG("PW_WINE64 launcher %s", line);
++}
++
++/* The player's decision for this start; its strings back extra[] until Wine
++ * has copied them. */
++static BlDecision blur_decision;
++
++/* Runs the launcher UI until play (returns) or close (leaves to home). */
++static void blur_launcher_screen(void)
++{
++    static BlurHost host;
++    static char files_dir[200];
++    BlServices s;
++    memset(&s, 0, sizeof(s));
++    /* The app sets up its own folders, before the user has copied anything. */
++    (void)mkdir("/data/Pc", 0777);
++    (void)mkdir("/data/Pc/Blur", 0777);
++    for (size_t i = 0; i < sizeof(runtime_roots) / sizeof(runtime_roots[0]) && !files_dir[0]; i++) {
++        char probe[240];
++        snprintf(probe, sizeof(probe), "%s/blur-files/manifest.txt", runtime_roots[i]);
++        if (access(probe, R_OK) == 0) snprintf(files_dir, sizeof(files_dir), "%s/blur-files", runtime_roots[i]);
++    }
++    int video_status = pw_videoout_ps5_open(&host.video);
++    host.ops_ok = pw_pad_ps5_platform_ops(&host.pad_ops) == PW_OK;
++    host.pad_status = host.ops_ok ? pw_pad_ps5_open(&host.pad, &host.pad_ops, pad_open_map,
++                                                    sizeof(pad_open_map) / sizeof(pad_open_map[0]))
++                                  : PW_ERR_STATE;
++    host.pad_tried = now_ns();
++    PS5LOG_LOG("PW_WINE64 launcher open video=%s pad=%s files=%s", pw_result_name(video_status),
++               pw_result_name(host.pad_status), files_dir[0] ? files_dir : "-");
++    s.ctx = &host;
++    s.present = blur_host_present;
++    s.pad = blur_host_pad;
++    s.now_ns = blur_host_now;
++    s.sleep_us = blur_host_sleep;
++    s.net_status = blur_host_net;
++    s.game_state = blur_host_game_state;
++    s.log = blur_host_log;
++    s.data_root = library_root;
++    s.game_dir = "/data/Pc/Blur";
++    s.package_files_dir = files_dir[0] ? files_dir : NULL;
++    s.build_id = PW_BUILD_ID;
++    int rc = video_status == PW_OK ? bl_frontend_run(&s, &blur_decision) : -1;
++    if (host.pad_status == PW_OK) (void)pw_pad_ps5_close(&host.pad);
++    if (video_status == PW_OK) (void)pw_videoout_ps5_close(&host.video);
++    if (rc != 0) {
++        /* No display: start only a game that is there, with the built-in profile. */
++        PS5LOG_LOG("PW_WINE64 launcher run=%d video=%s", rc, pw_result_name(video_status));
++        memset(&blur_decision, 0, sizeof(blur_decision));
++        if (blur_host_game_state(NULL) == BL_READY_OK) return;
++        leave_to_home("blur-launcher-no-display");
++    }
++    if (blur_decision.action == BL_LEAVE_HOME) leave_to_home("blur-launcher-close");
++    PS5LOG_LOG("PW_WINE64 launcher chose=start env=%u", blur_decision.env_count);
++}
++
++/* The launcher's environment into extra[]: WINEDEBUG through extra[0], the
++ * rest replaces a variable the profile already set or is appended. The
++ * launcher removes DXVK_PS4_NATIVE for the compatible renderer, so a value
++ * the built-in profile set is dropped too. */
++static void blur_apply_decision(PwWineStartEnv *extra, uint32_t *count, size_t capacity)
++{
++    int native = 0;
++    for (unsigned i = 0; i < blur_decision.env_count; i++) {
++        const char *name = blur_decision.env[i].name, *value = blur_decision.env[i].value;
++        if (!strcmp(name, "DXVK_PS4_NATIVE")) native = 1;
++        if (!strcmp(name, "WINEDEBUG")) { extra[0].value = value; continue; }
++        uint32_t j;
++        for (j = 1; j < *count; j++) if (extra[j].name && !strcmp(extra[j].name, name)) break;
++        if (j < *count) extra[j].value = value;
++        else if (*count < capacity) extra[(*count)++] = (PwWineStartEnv){ name, value };
++        else PS5LOG_LOG("PW_WINE64 launcher env dropped=%s (no room)", name);
++    }
++    if (!native)
++        for (uint32_t j = 1; j < *count; j++)
++            if (extra[j].name && !strcmp(extra[j].name, "DXVK_PS4_NATIVE")) {
++                memmove(&extra[j], &extra[j + 1], (*count - j - 1) * sizeof(extra[0]));
++                (*count)--;
++                extra[*count] = (PwWineStartEnv){ NULL, NULL };
++                break;
++            }
++    PS5LOG_LOG("PW_WINE64 launcher env applied=%u native=%d winedebug=%s", blur_decision.env_count, native,
++               extra[0].value);
++}
++
+ /* Normal-mode start page: a found game waits for Cross, a missing one explains
+  * where to put it. The file is checked again while the page is up, so a copy
+  * finished over FTP is picked up without restarting. */
+@@ -1590,7 +1690,7 @@
+     /* Maintenance is sampled once per process, after the data grant. */
+     direct_maintenance = access("/data/prospero-win/blur-maintenance", F_OK) == 0;
+     if (!direct_maintenance) {
+-        direct_start_screen();
++        blur_launcher_screen();
+         if (direct_init(&launch) != 0) leave_to_home("blur-direct-profile-invalid");
+     } else {
+         (void)pw_wine_launch_parse(argc, argv, catalog, catalog_count, &launch);
+@@ -1765,6 +1865,9 @@
+                 strcat(names, debug_env[i].name);
+             }
+             if (debug_count) PS5LOG_LOG("PW_WINE64 debug_env=%s", names);
++            if (!direct_maintenance && blur_decision.action == BL_START_GAME)
++                blur_apply_decision(extra, &config.extra_env_count,
++                                    sizeof(extra) / sizeof(extra[0]) - 4);   /* room for the title's later lines */
+             {
+                 int seventh = 0;
+                 for (size_t i = 0; i < debug_count; i++)

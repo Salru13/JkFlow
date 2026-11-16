@@ -1,0 +1,548 @@
+--- a/src/vulkan/wsi/wsi_orbis.c
++++ b/src/vulkan/wsi/wsi_orbis.c
+@@ -384,6 +384,11 @@
+  * ended may still hold wsi_orbis_owner_lock. -1 with no output open. */
+ static int32_t wsi_orbis_video_handle = -1;
+ 
++/* ⚠ THE DISPLAY'S FLIP RATE, as last asked for through wsi_orbis_set_flip_rate (0 = 60 Hz, 1 = 30 Hz, 2 = 20 Hz).
++ * Every attach applies it, so a re-attach or a newer swapchain keeps the rate the title chose instead of
++ * putting 60 Hz back. Guarded by wsi_orbis_owner_lock. */
++static int32_t wsi_orbis_flip_rate = ORBIS_VIDEO_OUT_FLIP_60HZ;
++
+ static void
+ wsi_orbis_release(struct wsi_orbis_scanout *so)
+ {
+@@ -453,7 +458,7 @@
+       so->detached = true;
+       return false;
+    }
+-   (void)sceVideoOutSetFlipRate(so->video, ORBIS_VIDEO_OUT_FLIP_60HZ);
++   (void)sceVideoOutSetFlipRate(so->video, wsi_orbis_flip_rate);
+    so->detached = false;
+    so->last_flip_ns = os_time_get_nano();   /* attaching counts as activity, so the title does not take it straight back */
+    wsi_orbis_owner = so;
+@@ -605,7 +610,11 @@
+                    (unsigned)err);
+       goto fail;
+    }
+-   err = sceVideoOutSetFlipRate(so->video, ORBIS_VIDEO_OUT_FLIP_60HZ);
++   /* Under the lock: a wsi_orbis_set_flip_rate since the open above has already applied to this scan-out (it
++    * is the owner), and this must not put an older rate back. */
++   pthread_mutex_lock(&wsi_orbis_owner_lock);
++   err = so->video >= 0 ? sceVideoOutSetFlipRate(so->video, wsi_orbis_flip_rate) : 0;
++   pthread_mutex_unlock(&wsi_orbis_owner_lock);
+    if (err < 0)
+       mesa_logw("wsi/orbis: sceVideoOutSetFlipRate -> 0x%08x (continuing; the flip rate is not correctness)",
+                 (unsigned)err);
+@@ -1415,3 +1424,47 @@
+       *pending_last = pending;
+    return status;
+ }
++
++/* ⚠ THE FLIP RATE, FOR A TITLE THAT LOCKS ITS FRAME RATE. At 30 Hz the display holds each flip for two vblanks,
++ * so a 30 fps title presents once per frame instead of presenting every frame twice. rate is sceVideoOut's:
++ * 0 = 60 Hz, 1 = 30 Hz, 2 = 20 Hz. The rate is stored even when nothing is attached, and every later attach
++ * (a new swapchain, a re-attach, the title's own frames) uses it.
++ *
++ * Returns sceVideoOutSetFlipRate's result for the scan-out that owns the display (0 applied), -1 when no
++ * scan-out is attached (stored only), -2 for a rate outside 0..2 (nothing changed).
++ *
++ * The flip-slot wait needs nothing new: it bounds the QUEUE (numFlipPending < count-1-reserve), not the rate,
++ * and at 30 Hz the display still consumes one flip per 33.3 ms, so a wait lasts at most about one 30 Hz period
++ * per queued flip and stays under the same two-second bound. Exported to other modules through the PRX
++ * descriptor (pw_wine_dl_sym); declared here because wsi_orbis.h is shared with the unchanged units. */
++int wsi_orbis_set_flip_rate(int rate);
++
++__attribute__((visibility("default"))) int
++wsi_orbis_set_flip_rate(int rate)
++{
++   if (rate < 0 || rate > 2)
++      return -2;
++   pthread_mutex_lock(&wsi_orbis_owner_lock);
++   const int32_t previous = wsi_orbis_flip_rate;
++   wsi_orbis_flip_rate = rate;
++   struct wsi_orbis_scanout *const so = wsi_orbis_owner;
++   const int32_t err = so != NULL && !so->detached && so->video >= 0 ? sceVideoOutSetFlipRate(so->video, rate) : -1;
++   pthread_mutex_unlock(&wsi_orbis_owner_lock);
++   if (rate != previous || (err != 0 && err != -1)) {
++      static unsigned said;
++      if (said++ < 16)
++         mesa_logi("wsi/orbis: flip rate %d -> %d (%s): 0x%08x", (int)previous, rate,
++                   err == -1 ? "stored, no scan-out attached" : "applied", (unsigned)err);
++   }
++   return err;
++}
++
++/* For wsi_common_headless.c's acquire, which now waits for the present worker to give an image back: sceKernelUsleep,
++ * because nanosleep does not return on this platform (see wsi_orbis_wait_for_flip_slot). */
++void wsi_orbis_sleep_us(uint32_t usec);
++
++void
++wsi_orbis_sleep_us(uint32_t usec)
++{
++   sceKernelUsleep(usec);
++}
+--- a/src/vulkan/wsi/wsi_common_headless.c
++++ b/src/vulkan/wsi/wsi_common_headless.c
+@@ -25,6 +25,7 @@
+ 
+ #ifdef HAVE_ORBIS_PLATFORM
+ #include "wsi_orbis.h"
++#include "wsi_orbis_present_queue.h"
+ #define WSI_ORBIS_FORCE_CPU_IMAGES true
+ #else
+ #define WSI_ORBIS_FORCE_CPU_IMAGES false
+@@ -409,6 +410,12 @@
+    uint32_t orbis_flip_n;
+    int32_t orbis_acquire_starvation_logged;
+    int32_t orbis_acquire_trace_count;
++   /* ⚠ THE PRESENT WORKER, and the lock every image flag is now read and written under: with presents flipped on
++    * the worker, acquire_next_image, queue_present, release_images and the worker all touch busy_on_host and the
++    * flip queue. See wsi_orbis_present_queue.h. Initialised last in create, so every failure path before it has
++    * nothing to tear down. */
++   struct wsi_orbis_pq orbis_pq;
++   bool orbis_pq_ready;
+ #endif
+    struct wsi_headless_image images[0];
+ };
+@@ -431,6 +438,9 @@
+    struct wsi_headless_swapchain *chain =
+       (struct wsi_headless_swapchain *)wsi_chain;
+ 
++#ifdef HAVE_ORBIS_PLATFORM
++   pthread_mutex_lock(&chain->orbis_pq.lock);
++#endif
+    for (uint32_t i = 0; i < count; i++) {
+       uint32_t index = indices[i];
+       assert(index < chain->base.image_count);
+@@ -448,8 +458,13 @@
+       for (uint32_t q = 0; q < chain->orbis_flip_n; q++)
+          if (chain->orbis_flip_q[q] == (int32_t)index)
+             chain->orbis_flip_q[q] = -1;
++      /* And from the present worker: a waiting entry is dropped, one in flight is not released again. */
++      wsi_orbis_pq_forget_locked(&chain->orbis_pq, index);
+ #endif
+    }
++#ifdef HAVE_ORBIS_PLATFORM
++   pthread_mutex_unlock(&chain->orbis_pq.lock);
++#endif
+ 
+    return VK_SUCCESS;
+ }
+@@ -477,12 +492,20 @@
+ #endif
+ 
+    while (1) {
++#ifdef HAVE_ORBIS_PLATFORM
++      /* ⚠ UNDER THE PRESENT WORKER'S LOCK, because the worker gives images back on its own thread. */
++      bool orbis_retry_now = false;
++      pthread_mutex_lock(&chain->orbis_pq.lock);
++#endif
+       /* Try to find a free image. */
+       for (uint32_t i = 0; i < chain->base.image_count; i++) {
+          if (!chain->images[i].busy_on_host) {
+             if (chain->images[i].busy_on_device) {
+                /* simple trick to avoid the just presented image */
+                chain->images[i].busy_on_device = false;
++#ifdef HAVE_ORBIS_PLATFORM
++               orbis_retry_now = true;   /* free on the next pass: no sleep before it */
++#endif
+                continue;
+             }
+ 
+@@ -491,6 +514,7 @@
+             chain->images[i].busy_on_host = true;
+             chain->images[i].busy_on_device = true;
+ #ifdef HAVE_ORBIS_PLATFORM
++            pthread_mutex_unlock(&chain->orbis_pq.lock);
+             if (acquire_trace <= 8)
+                mesa_logi("wsi/orbis: 0031 acquire return #%d VK_SUCCESS image=%u",
+                          acquire_trace, i);
+@@ -499,6 +523,9 @@
+          }
+       }
+ 
++#ifdef HAVE_ORBIS_PLATFORM
++      pthread_mutex_unlock(&chain->orbis_pq.lock);
++#endif
+       /* Check for timeout. */
+       struct timespec current_time;
+       clock_gettime(CLOCK_MONOTONIC, &current_time);
+@@ -506,6 +533,7 @@
+       const uint64_t waited_ns = timespec_sub_to_nsec(&current_time, &start_time);
+       if (waited_ns >= 1000000000ULL &&
+           p_atomic_cmpxchg(&chain->orbis_acquire_starvation_logged, 0, 1) == 0) {
++         pthread_mutex_lock(&chain->orbis_pq.lock);
+          uint32_t host_mask = 0;
+          uint32_t device_mask = 0;
+          for (uint32_t i = 0; i < chain->base.image_count && i < 32; i++) {
+@@ -522,6 +550,10 @@
+                    chain->orbis_zero_copy, chain->orbis_pending,
+                    chain->orbis_flip_n,
+                    wsi_orbis_flips_pending(chain->scanout));
++         mesa_logw("wsi/orbis: present worker: %u waiting, in flight %d, %llu presented, %llu failed",
++                   chain->orbis_pq.n, chain->orbis_pq.inflight,
++                   (unsigned long long)chain->orbis_pq.presented, (unsigned long long)chain->orbis_pq.failures);
++         pthread_mutex_unlock(&chain->orbis_pq.lock);
+       }
+ #endif
+       if (timespec_after(&current_time, &end_time)) {
+@@ -568,6 +600,14 @@
+ #endif
+          return info->timeout != 0 ? VK_TIMEOUT : VK_NOT_READY;
+       }
++#ifdef HAVE_ORBIS_PLATFORM
++      /* ⚠ SLEEP, DO NOT SPIN. An image now comes back from the present worker, a frame later at most; the old
++       * busy loop would burn a core the replay needs for all of that time. 100 us against a 33 ms frame. */
++      if (!orbis_retry_now) {
++         extern void wsi_orbis_sleep_us(uint32_t usec);
++         wsi_orbis_sleep_us(100);
++      }
++#endif
+    }
+ }
+ 
+@@ -615,6 +655,45 @@
+          chain->images[done].busy_on_host = false;
+    }
+ }
++
++/* ⚠ THE PRESENT LEAVES THE CALLER'S THREAD unless ORBIS_WSI_SYNC_PRESENT=1 (or ORBIS_WSI_NO_DEFER=1, which keeps its
++ * immediate synchronous present). See wsi_orbis_present_queue.h for the measurement. Same reservation as the
++ * deferred present: the worker's one waiting frame is the deferred slot. Announced once. */
++static bool
++wsi_headless_orbis_async(void)
++{
++   static int async = -1;
++   if (async < 0) {
++      const char *const e = getenv("ORBIS_WSI_SYNC_PRESENT");
++      const bool sync = e != NULL && *e != '\0' && *e != '0';
++      async = wsi_headless_orbis_defers() && !sync ? 1 : 0;
++      mesa_logi("wsi/orbis: present is %s", async ? "ASYNCHRONOUS - a worker per swapchain waits for the GPU and "
++                "flips; queue_present returns at once" : "synchronous on the caller's thread");
++   }
++   return async == 1;
++}
++
++/* The worker's present: exactly what the deferred path did for the previous frame. No lock held. */
++static bool
++wsi_headless_orbis_pq_present(void *ctx, uint32_t index, uint64_t seq)
++{
++   struct wsi_headless_swapchain *const chain = ctx;
++   const struct wsi_image *const img = &chain->images[index].base;
++   return wsi_orbis_scanout_present(chain->scanout, index, img->cpu_map, (uint32_t)img->row_pitches[0], seq);
++}
++
++/* Called with orbis_pq.lock held: hand the image to the flip queue, or back to acquire. Same as the deferred path,
++ * including on a failed flip (wsi_orbis may have submitted it). */
++static void
++wsi_headless_orbis_pq_done(void *ctx, uint32_t index, bool ok)
++{
++   struct wsi_headless_swapchain *const chain = ctx;
++   (void)ok;
++   if (chain->orbis_zero_copy)
++      wsi_headless_orbis_retire_flips(chain, index);
++   else
++      chain->images[index].busy_on_host = false;
++}
+ #endif
+ 
+ static VkResult
+@@ -694,20 +773,55 @@
+             goto orbis_done;
+          }
+          if (chain->orbis_zero_copy) {
++            pthread_mutex_lock(&chain->orbis_pq.lock);
+             wsi_headless_orbis_retire_flips(chain, image_index);
++            pthread_mutex_unlock(&chain->orbis_pq.lock);
+             handed_on = true; /* the flip queue releases it when the display is done with it */
+          }
++      } else if (chain->orbis_pq_ready && wsi_headless_orbis_async() && !chain->orbis_pq.start_failed) {
++         /* ⚠ RETURN NOW, FLIP ON THE WORKER. The sequence is taken here for the same reason as below: every
++          * submission of this frame has been made. A failure of an earlier frame's flip is reported by this
++          * present, as OUT_OF_DATE, and this image is then given back rather than queued. */
++         extern uint64_t ac_orbis_gpu_seq_now(void);
++         pthread_mutex_lock(&chain->orbis_pq.lock);
++         const bool failed = wsi_orbis_pq_take_failure_locked(&chain->orbis_pq);
++         pthread_mutex_unlock(&chain->orbis_pq.lock);
++         if (failed) {
++            orbis_result = VK_ERROR_OUT_OF_DATE_KHR;
++            goto orbis_done;
++         }
++         if (wsi_orbis_pq_enqueue(&chain->orbis_pq, image_index, ac_orbis_gpu_seq_now())) {
++            handed_on = true; /* the worker presents it, then the flip queue releases it */
++         } else {
++            /* No worker thread: present this one immediately, and every later one through the deferred path
++             * (start_failed is now set). */
++            mesa_loge("wsi/orbis: present worker could not be started - presenting synchronously");
++            const bool ok = wsi_orbis_scanout_present(chain->scanout, image_index, img->cpu_map,
++                                                      (uint32_t)img->row_pitches[0], 0);
++            if (chain->orbis_zero_copy) {
++               pthread_mutex_lock(&chain->orbis_pq.lock);
++               wsi_headless_orbis_retire_flips(chain, image_index);
++               pthread_mutex_unlock(&chain->orbis_pq.lock);
++               handed_on = true;
++            }
++            if (!ok) {
++               orbis_result = VK_ERROR_OUT_OF_DATE_KHR;
++               goto orbis_done;
++            }
++         }
+       } else {
+          if (chain->orbis_pending >= 0) {
+             const struct wsi_image *prev = &chain->images[chain->orbis_pending].base;
+             const bool ok = wsi_orbis_scanout_present(chain->scanout, (uint32_t)chain->orbis_pending,
+                                                       prev->cpu_map, (uint32_t)prev->row_pitches[0],
+                                                       chain->orbis_pending_seq);
++            pthread_mutex_lock(&chain->orbis_pq.lock);
+             if (chain->orbis_zero_copy) {
+                wsi_headless_orbis_retire_flips(chain, (uint32_t)chain->orbis_pending);
+             } else {
+                chain->images[chain->orbis_pending].busy_on_host = false;
+             }
++            pthread_mutex_unlock(&chain->orbis_pq.lock);
+             chain->orbis_pending = -1;
+             if (!ok) {
+                orbis_result = VK_ERROR_OUT_OF_DATE_KHR;
+@@ -728,8 +842,13 @@
+    }
+ 
+ orbis_done:
+-   if (!handed_on)
++   if (!handed_on) {
++      if (chain->orbis_pq_ready)
++         pthread_mutex_lock(&chain->orbis_pq.lock);
+       chain->images[image_index].busy_on_host = false;
++      if (chain->orbis_pq_ready)
++         pthread_mutex_unlock(&chain->orbis_pq.lock);
++   }
+    return orbis_result;
+ #endif
+ 
+@@ -763,7 +882,12 @@
+     * image. The `prev->cpu_map != NULL` guard passed on the dangling pointer, so the copy path
+     * memcpy'd out of unmapped memory and the zero-copy path flipped a freed buffer that the display
+     * then kept scanning. Present first, take the scan-out down second, free the images last: after
+-    * wsi_orbis_scanout_destroy the display holds nothing of ours. */
++    * wsi_orbis_scanout_destroy the display holds nothing of ours.
++    *
++    * ⚠ THE WORKER FIRST: every frame it still holds is presented, in order, and the thread joined, before the
++    * scan-out it flips on is taken down. */
++   if (chain->orbis_pq_ready)
++      wsi_orbis_pq_drain_and_stop(&chain->orbis_pq);
+    if (chain->orbis_pending >= 0 && chain->scanout != NULL) {
+       const struct wsi_image *prev = &chain->images[chain->orbis_pending].base;
+       if (prev->cpu_map != NULL)
+@@ -779,6 +903,10 @@
+ 
+    wsi_orbis_scanout_destroy(chain->scanout);
+    chain->scanout = NULL;
++   if (chain->orbis_pq_ready) {
++      wsi_orbis_pq_finish(&chain->orbis_pq);
++      chain->orbis_pq_ready = false;
++   }
+ #endif
+ 
+    for (uint32_t i = 0; i < chain->base.image_count; i++) {
+@@ -985,6 +1113,11 @@
+       }
+       mesa_logi("wsi/orbis: 0031 acquire tracing active - images=%u zero_copy=%u",
+                 chain->base.image_count, chain->orbis_zero_copy);
++      /* One waiting frame: the deferred slot the reservation above already counts. The thread itself is
++       * started by the first present. */
++      wsi_orbis_pq_init(&chain->orbis_pq, 1, chain, wsi_headless_orbis_pq_present, wsi_headless_orbis_pq_done);
++      chain->orbis_pq_ready = true;
++      (void)wsi_headless_orbis_async();
+    }
+ #endif
+ 
+--- a/src/vulkan/wsi/wsi_orbis_present_queue.h
++++ b/src/vulkan/wsi/wsi_orbis_present_queue.h
+@@ -0,0 +1,187 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * ⚠ THE PRESENT LEAVES THE APPLICATION'S SUBMIT THREAD (native-dxvk, 2026-11-13).
++ *
++ * MEASURED (run-natpp1, native DXVK 1.10.3, 4-player race): SynchronizePresent waited 24-28 ms per frame, the GPU
++ * idled ~24 ms per frame and replay took ~10 ms. DXVK calls vkQueuePresentKHR on its submit thread, in order with
++ * its command submissions, and the deferred present in wsi_common_headless.c waits there for the previous frame's
++ * GPU work and then for a flip slot. While it waits, nothing else is submitted, so replay, GPU and flip run one
++ * after another instead of overlapping.
++ *
++ * So queue_present only records {image, the GPU sequence that renders it} here and returns, and one thread per
++ * swapchain does what the deferred present did, in the same order: wait for that sequence, wait for a flip slot,
++ * flip, and hand the image back to acquire through the flip queue.
++ *
++ * ⚠ THE FIFO BOUND IS THE OLD DEFERRED SLOT, NOT A NEW NUMBER. The zero-copy reservation (wsi_orbis_scanout_reserve)
++ * already counts one image for the application and one held by the WSI after its present, and that is exactly
++ * what this queue holds: at most `bound` images waiting, plus the one the worker is flipping, which is the
++ * "flip about to be submitted" slot in wsi_orbis_wait_for_flip_slot's P + 2 + R <= count. A deeper queue would
++ * need a larger reservation and add latency without adding throughput. A present that finds the queue full waits
++ * here, which is the back-pressure the old synchronous wait gave, now one frame later.
++ *
++ * Self-contained (pthread only) so the same code is driven under ThreadSanitizer on the host
++ * (research/native-wine/native-dxvk/wsi-async/pq_tsan_test.c).
++ */
++#ifndef WSI_ORBIS_PRESENT_QUEUE_H
++#define WSI_ORBIS_PRESENT_QUEUE_H
++
++#include <pthread.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <string.h>
++
++#define WSI_ORBIS_PQ_MAX 8
++
++struct wsi_orbis_pq {
++   /* Guards everything below AND the owner's image bookkeeping (busy_on_host, the flip queue), because the
++    * worker releases images while acquire_next_image looks for one on another thread. */
++   pthread_mutex_t lock;
++   pthread_cond_t cond;   /* queue changed: an item arrived, an item finished, or stop was asked */
++   pthread_t thread;
++   bool started;          /* the worker exists and must be joined */
++   bool start_failed;     /* pthread_create refused once: the owner presents synchronously from then on */
++   bool stop;
++   uint32_t bound;        /* at most this many images waiting (not counting the one in flight) */
++   int32_t q[WSI_ORBIS_PQ_MAX];
++   uint64_t seq[WSI_ORBIS_PQ_MAX];
++   uint32_t head, n;
++   int32_t inflight;      /* the image the worker is presenting, or -1 */
++   bool inflight_released;/* the application took it back meanwhile (release_images) */
++   bool failed;           /* a present failed; the next queue_present reports it */
++   uint64_t presented, failures;
++   void *ctx;
++   /* Called WITHOUT the lock: waits for the GPU, waits for a slot, flips. Returns false on a failed flip. */
++   bool (*present)(void *ctx, uint32_t index, uint64_t seq);
++   /* Called WITH the lock: the image has been handed to the display (or failed); release what can be released.
++    * Not called for an image the application released while it was in flight. */
++   void (*done)(void *ctx, uint32_t index, bool ok);
++};
++
++static inline void
++wsi_orbis_pq_init(struct wsi_orbis_pq *pq, uint32_t bound, void *ctx,
++                  bool (*present)(void *, uint32_t, uint64_t), void (*done)(void *, uint32_t, bool))
++{
++   memset(pq, 0, sizeof(*pq));
++   pthread_mutex_init(&pq->lock, NULL);
++   pthread_cond_init(&pq->cond, NULL);
++   pq->bound = bound < 1 ? 1 : bound > WSI_ORBIS_PQ_MAX ? WSI_ORBIS_PQ_MAX : bound;
++   pq->inflight = -1;
++   pq->ctx = ctx;
++   pq->present = present;
++   pq->done = done;
++}
++
++static void *
++wsi_orbis_pq_main(void *arg)
++{
++   struct wsi_orbis_pq *const pq = arg;
++   pthread_mutex_lock(&pq->lock);
++   for (;;) {
++      while (pq->n == 0 && !pq->stop)
++         pthread_cond_wait(&pq->cond, &pq->lock);
++      if (pq->n == 0)
++         break;   /* stop asked and nothing left: every queued frame has been presented */
++      const int32_t index = pq->q[pq->head];
++      const uint64_t seq = pq->seq[pq->head];
++      pq->head = (pq->head + 1) % WSI_ORBIS_PQ_MAX;
++      pq->n--;
++      if (index < 0) {   /* released by the application while it waited */
++         pthread_cond_broadcast(&pq->cond);
++         continue;
++      }
++      pq->inflight = index;
++      pq->inflight_released = false;
++      pthread_mutex_unlock(&pq->lock);
++
++      const bool ok = pq->present(pq->ctx, (uint32_t)index, seq);
++
++      pthread_mutex_lock(&pq->lock);
++      if (!pq->inflight_released)
++         pq->done(pq->ctx, (uint32_t)index, ok);
++      pq->inflight = -1;
++      pq->presented++;
++      if (!ok) {
++         pq->failed = true;
++         pq->failures++;
++      }
++      pthread_cond_broadcast(&pq->cond);
++   }
++   pthread_mutex_unlock(&pq->lock);
++   return NULL;
++}
++
++/* Hands `index` to the worker. Returns 1 when queued; 0 when no worker could be started, in which case nothing
++ * was queued and the caller must present synchronously. Blocks while the queue is full. Takes the lock. */
++static inline int
++wsi_orbis_pq_enqueue(struct wsi_orbis_pq *pq, uint32_t index, uint64_t seq)
++{
++   pthread_mutex_lock(&pq->lock);
++   if (!pq->started && !pq->start_failed) {
++      if (pthread_create(&pq->thread, NULL, wsi_orbis_pq_main, pq) == 0)
++         pq->started = true;
++      else
++         pq->start_failed = true;
++   }
++   if (!pq->started) {
++      pthread_mutex_unlock(&pq->lock);
++      return 0;
++   }
++   while (pq->n >= pq->bound)
++      pthread_cond_wait(&pq->cond, &pq->lock);
++   const uint32_t tail = (pq->head + pq->n) % WSI_ORBIS_PQ_MAX;
++   pq->q[tail] = (int32_t)index;
++   pq->seq[tail] = seq;
++   pq->n++;
++   pthread_cond_broadcast(&pq->cond);
++   pthread_mutex_unlock(&pq->lock);
++   return 1;
++}
++
++/* With the lock held: true once if a present failed since the last call. */
++static inline bool
++wsi_orbis_pq_take_failure_locked(struct wsi_orbis_pq *pq)
++{
++   const bool f = pq->failed;
++   pq->failed = false;
++   return f;
++}
++
++/* With the lock held: the application took `index` back (VK_EXT_swapchain_maintenance1). A waiting entry is
++ * dropped; an entry in flight is still flipped (it cannot be recalled) but not handed to done(), so the image is
++ * not released a second time under the application. */
++static inline void
++wsi_orbis_pq_forget_locked(struct wsi_orbis_pq *pq, uint32_t index)
++{
++   for (uint32_t i = 0; i < pq->n; i++) {
++      const uint32_t at = (pq->head + i) % WSI_ORBIS_PQ_MAX;
++      if (pq->q[at] == (int32_t)index)
++         pq->q[at] = -1;
++   }
++   if (pq->inflight == (int32_t)index)
++      pq->inflight_released = true;
++}
++
++/* Presents everything still queued, stops the worker and joins it. Called at swapchain destroy, before the scan-out
++ * and the images go away. Takes the lock; the caller must not hold it. */
++static inline void
++wsi_orbis_pq_drain_and_stop(struct wsi_orbis_pq *pq)
++{
++   pthread_mutex_lock(&pq->lock);
++   const bool started = pq->started;
++   pq->stop = true;
++   pthread_cond_broadcast(&pq->cond);
++   pthread_mutex_unlock(&pq->lock);
++   if (started)
++      pthread_join(pq->thread, NULL);
++   pq->started = false;
++}
++
++static inline void
++wsi_orbis_pq_finish(struct wsi_orbis_pq *pq)
++{
++   pthread_cond_destroy(&pq->cond);
++   pthread_mutex_destroy(&pq->lock);
++}
++
++#endif /* WSI_ORBIS_PRESENT_QUEUE_H */

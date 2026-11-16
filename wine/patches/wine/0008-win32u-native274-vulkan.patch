@@ -1,0 +1,91 @@
+JkFlow 1.00 Wine PS4 runtime: win32u: Vulkan present path (native274)
+
+
+ dlls/win32u/vulkan.c
+---
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -2014,8 +2014,10 @@
+     struct swapchain *swapchain = swapchain_from_handle( acquire_info->swapchain );
+     struct vulkan_device *device = vulkan_device_from_handle( client_device );
+     VkAcquireNextImageInfoKHR acquire_info_host = *acquire_info;
++#ifndef __PROSPERO__
+     struct surface *surface = swapchain->surface;
+     RECT client_rect;
++#endif
+     VkResult res;
+ 
+     acquire_info_host.swapchain = swapchain->obj.host.swapchain;
+@@ -2023,6 +2025,7 @@
+     acquire_info_host.fence = fence ? fence->host.fence : 0;
+     res = device->p_vkAcquireNextImage2KHR( device->host.device, &acquire_info_host, image_index );
+ 
++#ifndef __PROSPERO__
+     if (!res && get_surface_rect( surface->hwnd, &client_rect, get_dpi_for_window( surface->hwnd ) ) &&
+         !extents_equals( &swapchain->extents, &client_rect ))
+     {
+@@ -2030,6 +2033,7 @@
+               swapchain->extents.width, swapchain->extents.height, wine_dbgstr_rect( &client_rect ) );
+         return VK_SUBOPTIMAL_KHR;
+     }
++#endif
+ 
+     return res;
+ }
+@@ -2041,14 +2045,17 @@
+     struct vulkan_fence *fence = client_fence ? vulkan_fence_from_handle( client_fence ) : NULL;
+     struct swapchain *swapchain = swapchain_from_handle( client_swapchain );
+     struct vulkan_device *device = vulkan_device_from_handle( client_device );
++#ifndef __PROSPERO__
+     struct surface *surface = swapchain->surface;
+     RECT client_rect;
++#endif
+     VkResult res;
+ 
+     res = device->p_vkAcquireNextImageKHR( device->host.device, swapchain->obj.host.swapchain, timeout,
+                                               semaphore ? semaphore->host.semaphore : 0, fence ? fence->host.fence : 0,
+                                               image_index );
+ 
++#ifndef __PROSPERO__
+     if (!res && get_surface_rect( surface->hwnd, &client_rect, get_dpi_for_window( surface->hwnd ) ) &&
+         !extents_equals( &swapchain->extents, &client_rect ))
+     {
+@@ -2056,6 +2063,7 @@
+               swapchain->extents.width, swapchain->extents.height, wine_dbgstr_rect( &client_rect ) );
+         return VK_SUBOPTIMAL_KHR;
+     }
++#endif
+ 
+     return res;
+ }
+@@ -2118,6 +2126,7 @@
+         }
+         else if (swapchain_res)
+             WARN( "Present returned status %d for swapchain %p\n", swapchain_res, swapchain );
++#ifndef __PROSPERO__
+         else if (!extents_equals( &swapchain->extents, &client_rect ))
+         {
+             WARN( "Swapchain size %dx%d does not match client rect %s, returning VK_SUBOPTIMAL_KHR\n",
+@@ -2125,6 +2134,7 @@
+             if (present_info->pResults) present_info->pResults[i] = VK_SUBOPTIMAL_KHR;
+             if (!res) res = VK_SUBOPTIMAL_KHR;
+         }
++#endif
+     }
+ 
+     if (swapchains != swapchains_buffer) free( swapchains );
+@@ -3319,13 +3329,3 @@
+     free( wrapper );
+     return NULL;
+ }
+-#ifndef __PROSPERO__
+-#endif
+-#ifndef __PROSPERO__
+-#endif
+-#ifndef __PROSPERO__
+-#endif
+-#ifndef __PROSPERO__
+-#endif
+-#ifndef __PROSPERO__
+-#endif

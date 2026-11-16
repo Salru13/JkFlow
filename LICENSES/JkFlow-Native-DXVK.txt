@@ -1,0 +1,29 @@
+JkFlow Native DXVK licence
+==========================
+
+Copyright (c) 2026 XxXJoker13XxX
+
+This licence covers our changes to DXVK in JkFlow's native renderer:
+  - the native renderer dxvknative.prx
+  - the native renderer client blur-files/d3d9.c988.dll
+The DXVK 1.10.3 code they are built from stays under its own zlib/libpng
+licence (LICENSES/DXVK-zlib.txt); this licence does not change that.
+
+You may use, copy, modify and distribute these files, and works based on
+them, for any purpose, free of charge, if all of the following are met:
+
+1. Credit. Every product, project, release or video that uses these files,
+   or a work based on them, names the author where its credits, readme or
+   description are shown, with this line:
+
+       Native DXVK by XxXJoker13XxX
+
+2. Notice. This licence text is included with every copy of the files or of
+   a work based on them.
+
+3. Changes. A modified version says that it is modified and must not be
+   presented as the original.
+
+THE FILES ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY ARISING FROM THE USE OF THE FILES.

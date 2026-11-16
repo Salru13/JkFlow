@@ -1,0 +1,38 @@
+# Apply order of the JkFlow 1.00 Wine PS4 runtime patches (git apply, -p1).
+# Trees and commits: see ../UPSTREAM.md. P = this folder (patches/).
+# The result was checked: each tree below equals the assembled build source
+# tree file for file (BUILD.md, "Checks").
+
+## 1. prospero-win at 108194ec78198683d4f038eaae29c08facceeddf  (PW)
+prospero-win/0001-shared-source-tree.patch
+prospero-win/0002-codec-generator-native270.patch
+prospero-win/0003-pw_wine_dl-override260.patch
+prospero-win/0004-jkflow100-names.patch
+prospero-win/0005-wowblur.patch
+
+## 2. orbis-win at 9749fcd97542a70d739999464b7f9a5d7502d8d0  (OW)
+orbis-win/0001-working-tree.patch
+#    then, in OW (the removed line holds a build-host path, so it is not in the patch):
+#    sed -i 's|^ROOT=/home/[^/]*/ps4-gladius$|ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." \&\& pwd -P)|' scripts/sync-toolchain.sh
+orbis-win/0002-wow-log.patch
+#    OW/prospero-win is a link to PW.
+
+## 3. Wine at 490f6d5dcbb2a5047345b8af88d114bbcaad69a8  (WINE)
+#    a) every patch named in prospero-series.txt, in that order, from PW/wine/patches/
+#    b) the runtime tree, then the stage changes:
+wine/0001-runtime-tree.patch
+#    c) the generated codec sources (UPSTREAM.md): run PW/tools/generate_vk_codecs.py
+#       (via PW/tools/stage_vk_batch.py) into dlls/winevulkan/
+wine/0002-ntdll-native264.patch
+wine/0003-ntdll-cs-sampler.patch
+wine/0004-ntdll-standard-handles.patch
+wine/0005-ntdll-spin260.patch
+wine/0006-wineserver-serverprio260.patch
+wine/0007-wineserver-jkflow100.patch
+wine/0008-win32u-native274-vulkan.patch
+wine/0009-win32u-native250-loader.patch
+wine/0010-winevulkan-pe-native269.patch
+wine/0011-winevulkan-pe-direct260.patch
+wine/0012-winevulkan-unix-parwork260.patch
+wine/0013-dsound-r3.patch
+wine/0014-wow64-wowblur.patch

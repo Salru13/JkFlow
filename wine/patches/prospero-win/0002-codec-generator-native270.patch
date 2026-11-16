@@ -1,0 +1,23 @@
+JkFlow 1.00 Wine PS4 runtime: Vulkan codec generator: decode entry point (native270)
+
+
+ tools/generate_vk_codecs.py
+---
+diff --git a/tools/generate_vk_codecs.py b/tools/generate_vk_codecs.py
+--- a/tools/generate_vk_codecs.py
++++ b/tools/generate_vk_codecs.py
+@@ -219,6 +219,14 @@
+  c.wire=(unsigned char *)wire;c.capacity=bytes;c.decode=1;c.arena=arena;c.arena_capacity=capacity;c.arena_used=(size+7)&~(size_t)7;memset(arena,0,size);
+  if(!generated(&c,code,arena)||c.used!=bytes)return 0;
+  *args=arena;return 1;}
++int pw_vk_generated_decode_used(unsigned code,const void *wire,size_t bytes,void *arena,size_t capacity,void **args,size_t *used)
++{ struct pw_vk_codec c={0};size_t size=pw_vk_generated_param_size(code);
++ if(!used||!size||size>capacity||bytes>PW_VK_CODEC_MAX_BYTES||capacity>PW_VK_CODEC_DECODE_BYTES||(uintptr_t)arena%8||!wire||!arena)return 0;
++ if((uintptr_t)wire>UINTPTR_MAX-bytes||(uintptr_t)arena>UINTPTR_MAX-capacity)return 0;
++ if((uintptr_t)wire<(uintptr_t)arena+capacity&&(uintptr_t)arena<(uintptr_t)wire+bytes)return 0;
++ c.wire=(unsigned char *)wire;c.capacity=bytes;c.decode=1;c.arena=arena;c.arena_capacity=capacity;c.arena_used=(size+7)&~(size_t)7;memset(arena,0,size);
++ if(!generated(&c,code,arena)||c.used!=bytes||c.arena_used>capacity)return 0;
++ *args=arena;*used=c.arena_used;return 1;}
+ '''
+   audit=[]
+   for f in funcs:

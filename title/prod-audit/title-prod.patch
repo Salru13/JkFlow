@@ -1,0 +1,148 @@
+--- a/wine64_main.c	2026-11-14 15:19:32.817957138 +0100
++++ b/wine64_main.c	2026-11-14 15:19:32.822181452 +0100
+@@ -70,6 +70,8 @@
+  * patch blur, settings and the loader. */
+ #include "bl_frontend.h"
+ #include "bl_loader.h"
++#include "bl_saves.h"
++#include "bl_session.h"
+ #include "native279-username.h"
+ #include "native279-username-env.h"
+ #include "native280-username-ui.h"
+@@ -124,15 +126,18 @@
+     "[display]\n"
+     "desktop = 1920x1080\n"
+     "scaling = fit\n"
++    "show_fps = false\n"
+     "[input]\n"
+     "mode = xinput\n"
+     "options = escape\n"
+     "[runtime]\n"
++    "fast_clock = true\n"
+     "cpu = native\n"
+     "[debug]\n"
+-    "winedebug = +tid,err+all,+loaddll\n"
++    "winedebug = -all\n"
+     "env = PW_NATIVE_ALERT_UMTX=1\n"
+-    "env = DXVK_PS4_NATIVE=menu\n";
++    "env = DXVK_PS4_NATIVE=menu\n"
++    "env = PW_SERVER_PRIO=699\n";
+ static PwGameProfile direct_profile;
+ static PwWineApp direct_app;
+ static int direct_single(int maintenance, int fixed) { return !maintenance || fixed; }
+@@ -605,6 +610,7 @@
+     if (loading->content) return;
+     loading->content = 1;
+     bl_loader_release();
++    bl_session_first_frame();          /* launcher session record: the game reached its first frame */
+     PS5LOG_LOG("PW_WINE64 loading done by=%s spinner_steps=%u", by, loading->step);
+ }
+ 
+@@ -816,6 +822,7 @@
+  * the launcher. */
+ static void on_exit_report(void)
+ {
++    bl_session_end_clean();            /* launcher session record: a normal end */
+     PS5LOG_LOG("PW_WINE64 exit sink_calls=%lu", sink_calls);
+     restart_title(NULL, launch.cycle + 1u, "wine-exit");
+     pw_diagnostics_close("wine64-exit");
+@@ -872,6 +879,11 @@
+                mount.helper_errno, mount.data_after, mount.elevated_after, mount.waited_ms,
+                mount.settled_ms, status == 0 ? library_root : "unavailable");
+     if (status != 0) return -1;
++    {   /* Blur saves live in the prefix the seed import below may refresh:
++         * back them up first (bl_saves.h; skipped when nothing changed). */
++        int saves = bl_saves_backup(library_root, BL_SAVES_PREFIX_DEFAULT);
++        PS5LOG_LOG("PW_WINE64 saves backup before seed import result=%d", saves);
++    }
+     {   /* Task 245: import the package's hash-pinned Blur seed into the library
+          * root before profiles are read (native245_seed.h). Every outcome is
+          * logged; none stops the launcher, and a refusal leaves /data untouched. */
+@@ -984,7 +996,7 @@
+                frame != MAP_FAILED,
+                (unsigned)catalog_count, (unsigned)launch.cycle, launch.refused, PW_WINE64_SCRIPT);
+     char log_status[80], report_path[96];
+-    snprintf(report_path, sizeof(report_path), "GET LOGS OVER FTP: %s/LOGS", library_root);
++    snprintf(report_path, sizeof(report_path), "LOGS: BLUR LAUNCHER > SETTINGS > SUPPORT > SAVE SUPPORT BUNDLE");
+     int report_help = 0;
+     pw_diagnostics_status(log_status, sizeof(log_status));
+     scene.status = log_status;
+@@ -1286,6 +1298,10 @@
+ /* The player's decision for this start; its strings back extra[] until Wine
+  * has copied them. */
+ static BlDecision blur_decision;
++/* Logging on in the launcher (BLUR_LOGS=1): the periodic runtime lines. */
++static int blur_logs_verbose;
++/* The remote-control file is polled during the game (test runs only). */
++static int blur_remote_on;
+ 
+ /* Runs the launcher UI until play (returns) or close (leaves to home). */
+ static void blur_launcher_screen(void)
+@@ -1346,6 +1362,7 @@
+     for (unsigned i = 0; i < blur_decision.env_count; i++) {
+         const char *name = blur_decision.env[i].name, *value = blur_decision.env[i].value;
+         if (!strcmp(name, "DXVK_PS4_NATIVE")) native = 1;
++        if (!strcmp(name, "BLUR_LOGS")) blur_logs_verbose = value[0] == '1';
+         if (!strcmp(name, "WINEDEBUG")) { extra[0].value = value; continue; }
+         uint32_t j;
+         for (j = 1; j < *count; j++) if (extra[j].name && !strcmp(extra[j].name, name)) break;
+@@ -1719,6 +1736,12 @@
+     game = !direct_maintenance ? &direct_profile :
+            (launch.app ? pw_wine_library_find(&library, launch.app->id) : NULL);
+     pw_rc_init(&remote, library_root, "game", game ? game->app.id : "", started);
++    {   /* Production: no file poll 5 times a second unless the control
++         * switch file was there at start (test runs). */
++        char rc_path[300];
++        snprintf(rc_path, sizeof(rc_path), "%s/pw_remote_control", library_root);
++        blur_remote_on = direct_maintenance || access(rc_path, F_OK) == 0;
++    }
+     if (game && strcmp(game->app.prefix, "default"))
+         snprintf(prefix, sizeof(prefix), "%s/prefixes/%s", library_root, game->app.prefix);
+     else
+@@ -2249,7 +2272,7 @@
+         /* XInput controller 0: the DualSense, and in a script build the
+          * macro's controller added to it, every frame, so a scripted press
+          * stays down until its release. */
+-        int remote_action = pw_rc_poll(&remote, now);
++        int remote_action = blur_remote_on ? pw_rc_poll(&remote, now) : PW_RC_NONE;
+         int remote_blocked = menu_open || (pad_read && pad.intercepted) || osk_ps5.showing;
+         if (remote_action == PW_RC_PAD && (!set_pad || remote_blocked)) {
+             pw_rc_release(&remote);
+@@ -2579,15 +2602,17 @@
+         {
+             /* Tell the system driver that this frame's command buffers have
+              * all been submitted. */
+-            static int logged_submit_done;
++            static int logged_submit_done, last_submit_done;
+             int submit_done = sceGnmSubmitDone();
+-            if (!logged_submit_done || submit_done)
++            if (!logged_submit_done || submit_done != last_submit_done)   /* first and on change, never per frame */
+                 PS5LOG_LOG("PW_WINE64 gnm submit_done rc=%d", submit_done);
+             logged_submit_done = 1;
++            last_submit_done = submit_done;
+         }
+         if (tick % 60 == 0) {
+             uint64_t v[16] = { 0 };
+ 
++            if (blur_logs_verbose)
+             PS5LOG_LOG("PW_WINE64 alive tick=%llu sink_calls=%lu frames_put=%llu shown=%llu "
+                        "rejected=%llu last=%ux%u inputs=%llu refused=%llu vk_shown=%llu vk_busy=%llu "
+                        "cpu_ms=%llu audio=%lu audible=%lu",
+@@ -2596,7 +2621,7 @@
+                        frames.width, frames.height, (unsigned long long)posted,
+                        (unsigned long long)refused, (unsigned long long)vulkan_frames.shown,
+                        (unsigned long long)vulkan_frames.busy, cpu_ms(), audio_grains, audio_audible);
+-            if (start.virtual_stats && tick % 300 == 0) {
++            if (blur_logs_verbose && start.virtual_stats && tick % 300 == 0) {
+                 static uint64_t faults_logged;
+ 
+                 start.virtual_stats(v, 16);
+@@ -2633,7 +2658,7 @@
+                     holders_logged = flexible < ((size_t)4 << 20) ? 2 : 1;
+                 }
+             }
+-            if (tick % 300 == 0) {
++            if (blur_logs_verbose && tick % 300 == 0) {
+                 uint64_t m[10] = { 0 };
+                 size_t flexible = 0;
+ 

@@ -1,0 +1,586 @@
+JkFlow 1.00 Wine PS4 runtime: ntdll: PS4 native libkernel qualification and event/alert backend (native263/264)
+
+
+ dlls/ntdll/unix/native263-native.c
+ dlls/ntdll/unix/native263-native-platform.c
+ dlls/ntdll/unix/native263-qualification.c
+ dlls/ntdll/unix/native263-qualification.h
+ dlls/ntdll/unix/native263-qualification-sdk.c
+ dlls/ntdll/unix/native264-qual-report.c
+ dlls/ntdll/unix/pw_orbis_alert_umtx.h
+---
+diff --git a/dlls/ntdll/unix/native263-native.c b/dlls/ntdll/unix/native263-native.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native263-native.c
+@@ -0,0 +1,68 @@
++#include "native263-qualification.h"
++#include <stdint.h>
++void n264_report_qualification(const struct n263_state *, int, int, int);
++int n263_native_opt_in(void);
++uint64_t n263_native_now_us(void);
++uintptr_t n263_native_owner_token(void);
++void n263_native_pause(void);
++int n263_native_prepare(struct n263_binding *, struct n263_ops *);
++
++enum { COLD, RUNNING, READY, FAILED };
++static atomic_uint phase;
++static atomic_uintptr_t owner;
++static struct n263_state retained; /* never freed/reused, including quarantine */
++
++const struct n263_qualified_abi *n263_get_qualified_abi(void)
++{
++    unsigned current, expected;
++    uintptr_t self;
++    if (!n263_native_opt_in()) return 0;
++    current = atomic_load_explicit(&phase, memory_order_acquire);
++    if (current == READY) return &retained.abi;
++    if (current == FAILED) return 0;
++    self = n263_native_owner_token();
++    if (!self) return 0;
++    expected = COLD;
++    if (atomic_compare_exchange_strong_explicit(&phase, &expected, RUNNING,
++                                               memory_order_acq_rel, memory_order_acquire))
++    {
++        struct n263_binding binding;
++        struct n263_ops ops;
++        atomic_store_explicit(&owner, self, memory_order_release);
++        int prepared = !n263_native_prepare(&binding, &ops);
++        int probed = prepared && atomic_load_explicit(&phase, memory_order_acquire) == RUNNING;
++        int good = probed && !n263_qualify(&retained, &binding, &ops) &&
++                   !retained.quarantined && retained.abi.qualified == 1 &&
++                   retained.abi.word_bits == 32;
++        expected = RUNNING;
++        /* A contender timeout or recursive entry irrevocably selects failure. */
++        if (!atomic_compare_exchange_strong_explicit(&phase, &expected,
++                    good ? READY : FAILED, memory_order_acq_rel, memory_order_acquire))
++            good = 0;
++        n264_report_qualification(&retained, prepared, probed, good);
++        return good ? &retained.abi : 0;
++    }
++    if (atomic_load_explicit(&owner, memory_order_acquire) == self)
++    {
++        /* No Wine alert calls are needed by normal qualification APIs.
++         * Unexpected recursion is unsupported, never a transient NULL. */
++        expected = RUNNING;
++        atomic_compare_exchange_strong(&phase, &expected, FAILED);
++        return 0;
++    }
++    uint64_t now = n263_native_now_us(), deadline = now + 500000;
++    if (!now || deadline < now) deadline = now;
++    unsigned polls = 0;
++    do
++    {
++        current = atomic_load_explicit(&phase, memory_order_acquire);
++        if (current == READY) return &retained.abi;
++        if (current == FAILED) return 0;
++        n263_native_pause();
++        now = n263_native_now_us();
++    } while (now && now < deadline && ++polls < 5000);
++    expected = RUNNING;
++    atomic_compare_exchange_strong_explicit(&phase, &expected, FAILED,
++                                           memory_order_acq_rel, memory_order_acquire);
++    return atomic_load_explicit(&phase, memory_order_acquire) == READY ? &retained.abi : 0;
++}
+diff --git a/dlls/ntdll/unix/native263-native-platform.c b/dlls/ntdll/unix/native263-native-platform.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native263-native-platform.c
+@@ -0,0 +1,132 @@
++#define _GNU_SOURCE
++#include "native263-qualification.h"
++#include <stddef.h>
++#include <stdlib.h>
++#include <string.h>
++#include <pthread.h>
++#include <sys/time.h>
++#ifdef N263_NATIVE_HOST_TEST
++#include "native263-native-sdk-test.h"
++#else
++#include <orbis/libkernel.h>
++#endif
++
++/* Existing loaded module only: no fixed handle, module load, or raw syscall. */
++static struct {
++    OrbisPthread worker;
++    void (*entry)(void *);
++    void *argument;
++    unsigned live;
++    __typeof__(&pthread_timedjoin_np) timedjoin;
++    OrbisKernelModuleInfo provider;
++} native;
++
++int n263_native_opt_in(void)
++{
++    const char *value = getenv("PW_NATIVE_ALERT_UMTX");
++    return value && !strcmp(value, "1");
++}
++uint64_t n263_native_now_us(void)
++{
++    uint64_t frequency = sceKernelGetProcessTimeCounterFrequency();
++    uint64_t ticks = sceKernelGetProcessTimeCounter();
++    if (!frequency || frequency > 10000000000ull || !ticks) return 0;
++    return ticks / frequency * 1000000ull + ticks % frequency * 1000000ull / frequency;
++}
++uintptr_t n263_native_owner_token(void) { return (uintptr_t)scePthreadSelf(); }
++void n263_native_pause(void) { (void)sceKernelUsleep(100); }
++static uint64_t now_callback(void *unused)
++{ (void)unused; return n263_native_now_us(); }
++static void pause_callback(void *unused) { (void)unused; n263_native_pause(); }
++static void *worker_entry(void *unused)
++{ (void)unused; native.entry(native.argument); return NULL; }
++static int start_callback(void *unused, void (*entry)(void *), void *argument)
++{
++    (void)unused;
++    if (native.live) return -1;
++    native.entry = entry; native.argument = argument;
++    int result = scePthreadCreate(&native.worker, NULL, worker_entry, NULL, "wine-umtx-qual");
++    if (!result) native.live = 1;
++    return result;
++}
++static int await_callback(void *unused, const atomic_uint *flag, unsigned wanted, uint64_t deadline)
++{
++    (void)unused;
++    unsigned polls = 0;
++    while (atomic_load_explicit(flag, memory_order_acquire) < wanted)
++    {
++        uint64_t now = n263_native_now_us();
++        if (!now || now >= deadline || ++polls >= 5000) return -1;
++        n263_native_pause();
++    }
++    return 0;
++}
++static int join_callback(void *unused, uint64_t deadline)
++{
++    struct timeval realtime;
++    struct timespec absolute;
++    uint64_t now = n263_native_now_us(), left;
++    (void)unused;
++    if (!native.live || !now || now >= deadline || sceKernelGettimeofday(&realtime)) return -1;
++    left = deadline - now;
++    if (left > 500000) return -1;
++    uint64_t nanos = (uint64_t)realtime.tv_usec * 1000 + left * 1000;
++    absolute.tv_sec = realtime.tv_sec + (time_t)(nanos / 1000000000);
++    absolute.tv_nsec = (long)(nanos % 1000000000);
++    /* Typed and exported SDK function. Never substitute an unbounded join. */
++    int result = native.timedjoin(native.worker, NULL, &absolute);
++    if (!result) native.live = 0;
++    return result;
++}
++static int executable_pointer(const OrbisKernelModuleInfo *info, uintptr_t pointer)
++{
++    for (unsigned i=0; i<info->segmentCount; i++)
++    {
++        uintptr_t start = (uintptr_t)info->segmentInfo[i].address;
++        uint32_t length = info->segmentInfo[i].size;
++        if ((info->segmentInfo[i].prot & 4) && pointer >= start && pointer - start < length) return 1;
++    }
++    return 0;
++}
++static int kernel_name(const char *name)
++{
++    const char *base = strrchr(name, '/'); base = base ? base+1 : name;
++    return !strcmp(base,"libkernel.sprx") || !strcmp(base,"libkernel_web.sprx") ||
++           !strcmp(base,"libkernel_sys.sprx");
++}
++static uint64_t provider_identity(const OrbisKernelModuleInfo *info, OrbisKernelModule module)
++{
++    /* Identity token, not a cryptographic authenticity claim. Provider remains resident. */
++    uint64_t hash = 1469598103934665603ull;
++    for (unsigned i=0;i<sizeof(info->fingerprint);i++) hash=(hash^info->fingerprint[i])*1099511628211ull;
++    hash=(hash^module)*1099511628211ull;
++    for(unsigned i=0;i<info->segmentCount;i++) hash=(hash^(uintptr_t)info->segmentInfo[i].address)*1099511628211ull;
++    return hash ? hash : 1;
++}
++int n263_native_prepare(struct n263_binding *binding, struct n263_ops *ops)
++{
++    OrbisKernelModule modules[256]; size_t available=0;
++    if (sceKernelGetModuleList(modules, sizeof(modules)/sizeof(modules[0]), &available) ||
++        !available || available > sizeof(modules)/sizeof(modules[0])) return -1;
++    for(size_t i=0;i<available;i++)
++    {
++        OrbisKernelModuleInfo info; memset(&info,0,sizeof(info)); info.size=sizeof(info);
++        if (sceKernelGetModuleInfo(modules[i],&info)) continue;
++        info.name[sizeof(info.name)-1]=0;
++        if (!kernel_name(info.name) || !info.segmentCount || info.segmentCount>4) continue;
++        if (n263_sdk_bind_existing_module(binding,(int)modules[i],provider_identity(&info,modules[i]),1)) continue;
++        uintptr_t umtx=0,error=0;
++        _Static_assert(sizeof(umtx)==sizeof(binding->umtx),"native pointer width");
++        memcpy(&umtx,&binding->umtx,sizeof(umtx)); memcpy(&error,&binding->kernel_errno,sizeof(error));
++        if (!executable_pointer(&info,umtx) || !executable_pointer(&info,error)) continue;
++        void *join_symbol = NULL;
++        if (sceKernelDlsym(modules[i], "pthread_timedjoin_np", &join_symbol) ||
++            !join_symbol || !executable_pointer(&info,(uintptr_t)join_symbol)) continue;
++        _Static_assert(sizeof(join_symbol)==sizeof(native.timedjoin),"typed join pointer ABI");
++        memcpy(&native.timedjoin,&join_symbol,sizeof(join_symbol));
++        native.provider=info;
++        *ops=(struct n263_ops){NULL,now_callback,start_callback,await_callback,join_callback,pause_callback};
++        return 0;
++    }
++    return -1;
++}
+diff --git a/dlls/ntdll/unix/native263-qualification.c b/dlls/ntdll/unix/native263-qualification.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native263-qualification.c
+@@ -0,0 +1,148 @@
++#include "native263-qualification.h"
++#include <stddef.h>
++#include <string.h>
++_Static_assert(sizeof(struct n263_time) == 24, "native timeout ABI");
++_Static_assert(sizeof(unsigned) == 4, "wait word width");
++_Static_assert(_Alignof(atomic_uint) >= 4, "wait word alignment");
++_Static_assert(offsetof(struct n263_state, width_canary) == 4, "upper32 canary layout");
++
++static void worker(void *pointer)
++{
++    struct n263_state *s = pointer;
++    struct n263_sample *sample = &s->samples[s->current];
++    int *error = s->binding.kernel_errno();
++    uint64_t start;
++    if (!error) { sample->raw_return = -999; atomic_store(&s->done, 1); return; }
++    atomic_store_explicit(&s->stage, 1, memory_order_release);
++    while (!atomic_load_explicit(&s->go, memory_order_acquire))
++    {
++        if (s->ops.now_us(s->ops.context) >= s->gate_deadline)
++        { sample->raw_return = -998; atomic_store(&s->done, 1); return; }
++        s->ops.pause(s->ops.context);
++    }
++    *error = 0;
++    start = s->ops.now_us(s->ops.context);
++    atomic_store_explicit(&s->stage, 2, memory_order_release);
++    sample->raw_return = s->binding.umtx(&s->word, 11, 0,
++        (void *)(uintptr_t)sizeof(s->timeout), &s->timeout);
++    sample->kernel_errno = *error;
++    sample->elapsed_us = s->ops.now_us(s->ops.context) - start;
++    atomic_store_explicit(&s->done, 1, memory_order_release);
++}
++
++static void wake(struct n263_state *s, struct n263_sample *sample)
++{
++    int *error = s->binding.kernel_errno();
++    atomic_store_explicit(&s->word, 1, memory_order_release);
++    if (!error) { sample->wake_return = -999; sample->wake_errno = 0; return; }
++    *error = 0;
++    sample->wake_return = s->binding.umtx(&s->word, 3, 1, NULL, NULL);
++    sample->wake_errno = *error;
++}
++
++static int finish(struct n263_state *s, uint64_t deadline)
++{
++    if (s->ops.await(s->ops.context, &s->done, 1, deadline))
++    {
++        /* Bounded cleanup attempt; never spawn another worker after failure. */
++        s->reason = N263_DEADLINE;
++        atomic_store(&s->go, 1);
++        wake(s, &s->samples[s->current]);
++        deadline = s->ops.now_us(s->ops.context) + 20000;
++        if (s->ops.await(s->ops.context, &s->done, 1, deadline))
++        { s->quarantined = 1; return -1; }
++    }
++    if (s->ops.join(s->ops.context, deadline))
++    { s->reason = N263_NO_JOIN; s->quarantined = 1; return -1; }
++    return s->reason == N263_OK ? 0 : -1;
++}
++
++int n263_qualify(struct n263_state *s, const struct n263_binding *binding,
++                const struct n263_ops *ops)
++{
++    unsigned test;
++    if (s->quarantined || s->starts) return -1; /* one attempt per state */
++    memset(&s->abi, 0, sizeof(s->abi));
++    s->reason = N263_UNSUPPORTED_BINDING;
++    if (!binding || !ops || !binding->umtx || !binding->kernel_errno ||
++        !binding->errno_accessor_abi_verified || binding->umtx_module_id < 0 ||
++        binding->umtx_module_id != binding->errno_module_id ||
++        !binding->generation || !binding->provider_identity ||
++        !ops->now_us || !ops->start || !ops->await || !ops->join || !ops->pause)
++        return -1;
++    s->binding = *binding; s->ops = *ops; s->reason = N263_OK;
++    if (!binding->kernel_errno()) { s->reason = N263_UNSUPPORTED_BINDING; return -1; }
++    for (test = 0; test < 5; ++test)
++    {
++        struct n263_sample *sample = &s->samples[test];
++        uint64_t now = ops->now_us(ops->context), deadline = now + 50000;
++        if (!now || deadline < now) { s->reason = N263_CLOCK_FAILED; return -1; }
++        s->current = test; *sample = (struct n263_sample){ .test = test + 1 };
++        s->width_canary = 0xa5337cc1u;
++        s->timeout = (struct n263_time){ 0, test == 1 ? 0 : test == 2 ? 2000000 : 10000000, 0, 0 };
++        atomic_store(&s->word, test == 0 ? 1 : 0);
++        atomic_store(&s->stage, 0); atomic_store(&s->done, 0);
++        atomic_store(&s->go, test == 4 ? 0 : 1); s->gate_deadline = deadline;
++        if (ops->start(ops->context, worker, s)) { s->reason = N263_START_FAILED; return -1; }
++        ++s->starts;
++        if (test >= 3)
++        {
++            if (ops->await(ops->context, &s->stage, test == 4 ? 1 : 2, deadline))
++            { s->reason = N263_DEADLINE; finish(s, deadline); return -1; }
++            if (test == 3)
++            {
++                uint64_t stamp = ops->now_us(ops->context), until = stamp + 2000;
++                unsigned polls = 0;
++                if (!stamp || until < stamp) s->reason = N263_CLOCK_FAILED;
++                while (s->reason == N263_OK && stamp < until)
++                {
++                    if (++polls > 256) { s->reason = N263_CLOCK_FAILED; break; }
++                    ops->pause(ops->context);
++                    uint64_t next = ops->now_us(ops->context);
++                    if (!next || next < stamp) { s->reason = N263_CLOCK_FAILED; break; }
++                    stamp = next;
++                }
++                if (s->reason == N263_OK && atomic_load_explicit(&s->done, memory_order_acquire))
++                    s->reason = N263_BAD_RESULT; /* must actually still be waiting */
++            }
++            wake(s, sample);
++            atomic_store_explicit(&s->go, 1, memory_order_release);
++        }
++        if (finish(s, deadline)) return -1;
++        if (sample->elapsed_us > 20000 ||
++            ((test == 0 || test == 1 || test == 4) && sample->elapsed_us > 2000)) goto bad;
++        if (test == 0)
++        {
++            if (!((sample->raw_return == 0 && sample->kernel_errno == 0) ||
++                  (sample->raw_return == -1 && sample->kernel_errno == N263_WOULDBLOCK_ERRNO)))
++                goto bad;
++            s->abi.mismatch_form = sample->raw_return == -1;
++        }
++        else if (test == 1 || test == 2)
++        {
++            if (sample->raw_return != -1 || sample->kernel_errno != N263_TIMEOUT_ERRNO ||
++                (test == 2 && sample->elapsed_us < 1000)) goto bad;
++        }
++        else
++        {
++            int expected_mismatch = test == 4 && s->abi.mismatch_form;
++            if (sample->raw_return != (expected_mismatch ? -1 : 0) ||
++                sample->kernel_errno != (expected_mismatch ? N263_WOULDBLOCK_ERRNO : 0) ||
++                sample->wake_return != 0 || sample->wake_errno != 0 ||
++                (test == 3 && sample->elapsed_us < 1000)) goto bad;
++        }
++        continue;
++bad:   s->reason = N263_BAD_RESULT; return -1;
++    }
++    s->abi.schema = N263_SCHEMA; s->abi.qualified = 1; s->abi.error_form = 1;
++    s->abi.wait_op = 11; s->abi.wake_op = 3;
++    s->abi.timeout_errno = N263_TIMEOUT_ERRNO;
++    s->abi.interrupted_errno = N263_INTERRUPTED_ERRNO;
++    s->abi.wouldblock_errno = N263_WOULDBLOCK_ERRNO;
++    s->abi.observed_errno_mask = 1u | (s->abi.mismatch_form ? 2u : 0u);
++    s->abi.word_bits = 32;
++    s->abi.generation = binding->generation; s->abi.provider_identity = binding->provider_identity;
++    s->abi.kernel_module_id = binding->umtx_module_id;
++    s->abi.umtx = binding->umtx; s->abi.kernel_errno = binding->kernel_errno;
++    return 0;
++}
+diff --git a/dlls/ntdll/unix/native263-qualification.h b/dlls/ntdll/unix/native263-qualification.h
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native263-qualification.h
+@@ -0,0 +1,66 @@
++#ifndef N263_QUALIFICATION_H
++#define N263_QUALIFICATION_H
++#include <stdint.h>
++#include <stdatomic.h>
++
++#define N263_SCHEMA 1
++#define N263_TIMEOUT_ERRNO 60u
++#define N263_INTERRUPTED_ERRNO 4u
++#define N263_WOULDBLOCK_ERRNO 35u
++typedef int (*n263_umtx_fn)(void *, int, unsigned long, void *, void *);
++typedef int *(*n263_errno_fn)(void);
++struct n263_qualified_abi {
++    uint32_t schema, qualified, error_form, wait_op, wake_op;
++    uint64_t generation, provider_identity;
++    int kernel_module_id;
++    n263_umtx_fn umtx;
++    n263_errno_fn kernel_errno;
++    uint32_t timeout_errno, interrupted_errno, wouldblock_errno, mismatch_form;
++    uint32_t observed_errno_mask; /* bit0 timeout, bit1 wouldblock, bit2 EINTR */
++    uint32_t word_bits;
++};
++/* Supplied by integration; NULL until qualified, immutable and pinned thereafter. */
++const struct n263_qualified_abi *n263_get_qualified_abi(void);
++
++struct n263_time { int64_t seconds, nanoseconds; uint32_t flags, clockid; };
++enum n263_reason { N263_OK, N263_UNSUPPORTED_BINDING, N263_START_FAILED,
++    N263_DEADLINE, N263_NO_JOIN, N263_BAD_RESULT, N263_CLOCK_FAILED };
++struct n263_sample {
++    uint32_t test;
++    int raw_return, kernel_errno, wake_return, wake_errno;
++    uint64_t elapsed_us;
++};
++struct n263_binding {
++    n263_umtx_fn umtx;
++    n263_errno_fn kernel_errno;
++    int umtx_module_id, errno_module_id;
++    uint32_t errno_accessor_abi_verified;
++    uint64_t generation, provider_identity;
++    int bind_umtx_status, bind_errno_status;
++};
++struct n263_ops {
++    void *context;
++    uint64_t (*now_us)(void *);
++    int (*start)(void *, void (*)(void *), void *);
++    int (*await)(void *, const atomic_uint *, unsigned, uint64_t);
++    int (*join)(void *, uint64_t);
++    void (*pause)(void *);
++};
++/* Keep this state alive for process lifetime if quarantined: a worker may remain. */
++struct n263_state {
++    _Alignas(4) atomic_uint word;
++    uint32_t width_canary; /* immediately above word: reject accidental64-bit comparison */
++    atomic_uint stage, go, done;
++    struct n263_binding binding;
++    struct n263_ops ops;
++    struct n263_sample samples[5];
++    struct n263_qualified_abi abi;
++    struct n263_time timeout;
++    uint64_t gate_deadline;
++    unsigned current, quarantined, reason, starts;
++};
++/* Does not enable or publish any Wine backend. At most one worker is live. */
++int n263_qualify(struct n263_state *, const struct n263_binding *, const struct n263_ops *);
++void n263_sdk_unqualified_binding(struct n263_binding *);
++int n263_sdk_bind_existing_module(struct n263_binding *, int, uint64_t, uint64_t);
++#endif
+diff --git a/dlls/ntdll/unix/native263-qualification-sdk.c b/dlls/ntdll/unix/native263-qualification-sdk.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native263-qualification-sdk.c
+@@ -0,0 +1,34 @@
++#include "native263-qualification.h"
++#include <string.h>
++#include <stddef.h>
++#include <orbis/libkernel.h>
++void n263_sdk_unqualified_binding(struct n263_binding *binding)
++{
++    memset(binding, 0, sizeof(*binding));
++    binding->umtx_module_id = binding->errno_module_id = -1;
++    /* Conservative result when no authenticated existing module was supplied.
++     * Never cast the unrelated symbol named errno or use ambient musl errno. */
++}
++
++/* Primary signature provenance: idc/ps4-payload-sdk kernel.h/kernel.c declare
++ * int *(*__error)() and resolve that name from the selected libkernel handle.
++ * Only that ordinary API declaration/resolution is used; no payload behavior. */
++int n263_sdk_bind_existing_module(struct n263_binding *binding, int module,
++                                uint64_t identity, uint64_t generation)
++{
++    void *umtx = NULL, *error = NULL;
++    n263_sdk_unqualified_binding(binding);
++    if (module < 0 || !identity || !generation) return -1;
++    binding->bind_umtx_status = sceKernelDlsym(module, "_umtx_op", &umtx);
++    binding->bind_errno_status = sceKernelDlsym(module, "__error", &error);
++    if (binding->bind_umtx_status || binding->bind_errno_status || !umtx || !error)
++        return -1;
++    _Static_assert(sizeof(umtx) == sizeof(binding->umtx), "SDK pointer ABI");
++    _Static_assert(sizeof(error) == sizeof(binding->kernel_errno), "SDK pointer ABI");
++    memcpy(&binding->umtx, &umtx, sizeof(umtx));
++    memcpy(&binding->kernel_errno, &error, sizeof(error));
++    binding->umtx_module_id = binding->errno_module_id = module;
++    binding->provider_identity = identity; binding->generation = generation;
++    binding->errno_accessor_abi_verified = 1;
++    return 0; /* bound only: qualification and publication remain separate */
++}
+diff --git a/dlls/ntdll/unix/native264-qual-report.c b/dlls/ntdll/unix/native264-qual-report.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/native264-qual-report.c
+@@ -0,0 +1,17 @@
++/* Cold-path qualification evidence for this process; no per-frame output. */
++#include "native263-qualification.h"
++#include "wine/debug.h"
++WINE_DEFAULT_DEBUG_CHANNEL(sync);
++void n264_report_qualification(const struct n263_state *state, int prepared, int probed, int selected)
++{
++    ERR("PW_UMTX264 prepared=%d probed=%d qualified=%d reason=%u quarantine=%u starts=%u provider=%llu module=%d bits=%u mismatch=%u errno_mask=%u\n",
++        prepared, probed, selected, state->reason, state->quarantined, state->starts,
++        (unsigned long long)state->abi.provider_identity, state->abi.kernel_module_id,
++        state->abi.word_bits, state->abi.mismatch_form, state->abi.observed_errno_mask);
++    if (probed && !state->quarantined)
++        for (unsigned i=0; i<5; ++i)
++            ERR("PW_UMTX264_SAMPLE test=%u ret=%d errno=%d wake_ret=%d wake_errno=%d us=%llu\n",
++                state->samples[i].test, state->samples[i].raw_return, state->samples[i].kernel_errno,
++                state->samples[i].wake_return, state->samples[i].wake_errno,
++                (unsigned long long)state->samples[i].elapsed_us);
++}
+diff --git a/dlls/ntdll/unix/pw_orbis_alert_umtx.h b/dlls/ntdll/unix/pw_orbis_alert_umtx.h
+new file mode 100644
+--- /dev/null
++++ b/dlls/ntdll/unix/pw_orbis_alert_umtx.h
+@@ -0,0 +1,75 @@
++/* Candidate only. Native ABI qualification is required before enabling.
++ * Layout/call convention follows the existing Orbis Mesa FreeBSD umtx adapter;
++ * relative timeout deliberately avoids SDK/native CLOCK_MONOTONIC numbering.
++ * No sys/umtx.h inclusion: that local compatibility header otherwise instantiates
++ * a pthread implementation and process-private state in every includer.
++ */
++#ifndef PW_NATIVE263_ALERT_ADAPTER_H
++#define PW_NATIVE263_ALERT_ADAPTER_H
++#include <stdint.h>
++#include <stddef.h>
++#include <errno.h>
++#include <time.h>
++#include "native263-qualification.h"
++struct pw_alert_umtx_time
++{
++    struct timespec timeout;
++    uint32_t flags;
++    uint32_t clockid;
++};
++_Static_assert(sizeof(uint32_t) == 4, "WAIT_UINT needs a 32-bit word");
++_Static_assert(sizeof(struct timespec) == 16, "native timeout ABI");
++_Static_assert(sizeof(struct pw_alert_umtx_time) == 24, "native timeout ABI");
++_Static_assert(offsetof(struct pw_alert_umtx_time, flags) == 16, "native timeout ABI");
++static int pw_alert_abi_valid(const struct n263_qualified_abi *abi)
++{
++    return abi && abi->word_bits == 32 && abi->schema == 1 && abi->qualified == 1 && abi->error_form == 1 &&
++           abi->generation && abi->provider_identity && abi->kernel_module_id >= 0 &&
++           abi->wait_op == 11 && abi->wake_op == 3 && abi->umtx && abi->kernel_errno &&
++           (abi->observed_errno_mask & 1) && abi->mismatch_form <= 1 &&
++           (!abi->mismatch_form || (abi->observed_errno_mask & 2)) &&
++           abi->timeout_errno && abi->interrupted_errno == 4 && abi->wouldblock_errno == 35 &&
++           abi->timeout_errno != abi->interrupted_errno &&
++           abi->timeout_errno != abi->wouldblock_errno &&
++           abi->interrupted_errno != abi->wouldblock_errno;
++}
++
++static int pw_alert_umtx_call(const struct n263_qualified_abi *abi, uint32_t *word, int op, unsigned long value,
++                              const struct timespec *relative)
++{
++    struct pw_alert_umtx_time timeout;
++    int *native_errno, saved_errno, raw_errno, ret, error;
++    if (!pw_alert_abi_valid(abi) || !(native_errno = abi->kernel_errno())) return EIO;
++    if (!word || ((uintptr_t)word & 3)) return EINVAL;
++    if (relative && (relative->tv_sec < 0 || relative->tv_nsec < 0 || relative->tv_nsec >= 1000000000))
++        return EINVAL;
++    timeout.flags = 0; /* Relative duration; not UMTX_ABSTIME. */
++    timeout.clockid = 0; /* Native and SDK CLOCK_REALTIME agree; relative duration only. */
++    if (relative) timeout.timeout = *relative;
++    saved_errno = *native_errno;
++    *native_errno = 0;
++    ret = abi->umtx(word, op, value,
++                           relative ? (void *)(uintptr_t)sizeof(timeout) : NULL,
++                           relative ? &timeout : NULL);
++    raw_errno = *native_errno;
++    *native_errno = saved_errno;
++    error = EIO;
++    if (!ret) error = 0;
++    else if (ret == -1)
++    {
++        if ((abi->observed_errno_mask & 1) && raw_errno == (int)abi->timeout_errno) error = ETIMEDOUT;
++        /* EINTR4 is namespace-defined (SDK/FreeBSD), not claimed physically observed. */
++        else if (raw_errno == (int)abi->interrupted_errno) error = EINTR;
++        else if ((abi->observed_errno_mask & 2) && raw_errno == (int)abi->wouldblock_errno) error = EAGAIN;
++    }
++    return error; /* No guessed SCE error decoding; ABI violations fail closed. */
++}
++static int pw_alert_umtx_wait(const struct n263_qualified_abi *abi, uint32_t *word, const struct timespec *relative)
++{
++    return pw_alert_umtx_call(abi, word, 11 /* UMTX_OP_WAIT_UINT */, 0, relative);
++}
++static int pw_alert_umtx_wake(const struct n263_qualified_abi *abi, uint32_t *word)
++{
++    return pw_alert_umtx_call(abi, word, 3 /* UMTX_OP_WAKE */, 1, NULL);
++}
++#endif

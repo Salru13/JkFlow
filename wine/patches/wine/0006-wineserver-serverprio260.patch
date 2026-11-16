@@ -1,0 +1,53 @@
+JkFlow 1.00 Wine PS4 runtime: wineserver: scheduling priorities (serverprio260)
+
+
+ server/fd.c
+---
+diff --git a/server/fd.c b/server/fd.c
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -78,6 +78,9 @@
+ #undef LIST_INIT
+ #undef LIST_ENTRY
+ #endif
++#if defined(__ORBIS__) && !defined(NOTE_LOWAT)
++#define NOTE_LOWAT 0
++#endif
+ #include <sys/stat.h>
+ #include <sys/time.h>
+ #ifdef MAJOR_IN_MKDEV
+@@ -110,7 +113,10 @@
+ #include "ddk/ntifs.h"
+ #include "ddk/wdm.h"
+ 
+-#if defined(HAVE_SYS_EPOLL_H) && defined(HAVE_EPOLL_CREATE)
++#if defined(__ORBIS__) && !defined(HAVE_KQUEUE)
++#error "Orbis needs the kqueue main loop; poll() permanently disables direct dispatch"
++#endif
++#if defined(HAVE_SYS_EPOLL_H) && defined(HAVE_EPOLL_CREATE) && !defined(__ORBIS__)
+ # include <sys/epoll.h>
+ # define USE_EPOLL
+ #endif /* HAVE_SYS_EPOLL_H && HAVE_EPOLL_CREATE */
+@@ -1046,6 +1052,22 @@
+ #endif
+     set_current_time();
+     server_start_time = current_time;
++#if defined(WINE_INPROCESS_SERVER) && defined(__PROSPERO__)
++    {
++        extern int scePthreadSetprio( void *thread, int priority );
++        extern int scePthreadGetprio( void *thread, int *priority );
++        extern void *scePthreadSelf( void );
++        const char *text = getenv( "PW_SERVER_PRIO" );
++        int wanted = text ? atoi( text ) : 0, before = -1, after = -1, status = -1;
++        if (wanted >= 256 && wanted <= 767)
++        {
++            scePthreadGetprio( scePthreadSelf(), &before );
++            status = scePthreadSetprio( scePthreadSelf(), wanted );
++            scePthreadGetprio( scePthreadSelf(), &after );
++            fprintf( stderr, "wine-ps5: server main-loop priority %d -> %d status=%#x\n", before, after, status );
++        }
++    }
++#endif
+ 
+     main_loop_epoll();
+     /* fall through to normal poll loop */

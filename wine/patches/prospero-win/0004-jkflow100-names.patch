@@ -1,0 +1,44 @@
+JkFlow 1.00 Wine PS4 runtime: JkFlow 1.00 names (user, home, uname, resolver pool)
+
+
+ wine/ps5/pw_wine_compat.c
+ wine/ps5/pw_ws2_32_libc.c
+---
+diff --git a/wine/ps5/pw_wine_compat.c b/wine/ps5/pw_wine_compat.c
+--- a/wine/ps5/pw_wine_compat.c
++++ b/wine/ps5/pw_wine_compat.c
+@@ -124,8 +124,8 @@
+     static struct passwd record;static char empty[]="";
+     const char *home=getenv("HOME"),*user=getenv("USER");
+     record=(struct passwd){0};
+-    record.pw_name=(char *)(user && *user?user:"prospero");
+-    record.pw_dir=(char *)(home && *home=='/'?home:"/download0/prospero-win");
++    record.pw_name=(char *)(user && *user?user:"BLUR");
++    record.pw_dir=(char *)(home && *home=='/'?home:"/download0/BLUR");
+     record.pw_uid=uid;record.pw_gid=getgid();record.pw_shell=empty;record.pw_passwd=empty;
+     return &record;
+ }
+@@ -146,7 +146,7 @@
+ 
+ int pw_compat_uname(char *fields,size_t field_size)
+ {
+-    static const char *const values[5]={"FreeBSD","ps5","12.02","prospero-win","amd64"};
++    static const char *const values[5]={"FreeBSD","ps5","12.02","BLUR","amd64"};
+     if(!fields || field_size<16){errno=EFAULT;return -1;}
+     for(int i=0;i<5;i++) {
+         char *field=fields+(size_t)i*field_size;
+diff --git a/wine/ps5/pw_ws2_32_libc.c b/wine/ps5/pw_ws2_32_libc.c
+--- a/wine/ps5/pw_ws2_32_libc.c
++++ b/wine/ps5/pw_ws2_32_libc.c
+@@ -115,9 +115,9 @@
+     /* Initialises libSceNet once; every later call returns SCE_NET_EBUSY,
+      * which is the expected answer here, so the result is not looked at. */
+     sceNetInit();
+-    if ((pool = sceNetPoolCreate("prospero-win", 0x4000, 0)) < 0)
++    if ((pool = sceNetPoolCreate("BLUR", 0x4000, 0)) < 0)
+         return EAI_FAIL;
+-    if ((resolver = sceNetResolverCreate("prospero-win", pool, 0)) < 0) {
++    if ((resolver = sceNetResolverCreate("BLUR", pool, 0)) < 0) {
+         sceNetPoolDestroy(pool);
+         return EAI_FAIL;
+     }

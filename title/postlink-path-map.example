@@ -1,0 +1,6 @@
+# Build-host path map for postlink_clean.py (POSTLINK_PATH_MAP=<this file>).
+# One "FROM TO" pair per line. FROM is a directory prefix of the build host
+# that ends up in the linked title (debug paths), TO a neutral prefix of the
+# SAME length (the replacement is done in place). Example (13 bytes each):
+#   /home/abcdef/ /build/jkflw/
+# The LLVM CI prefix /home/runner/ -> /build/ci-rt/ is always applied.

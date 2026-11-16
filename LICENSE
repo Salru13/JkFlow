@@ -1,0 +1,48 @@
+JkFlow for PS4
+
+The JkFlow launcher
+-------------------
+The launcher code (the start screen, Patch, settings, help and the loader,
+linked into the title sce_module/relocated_wine_app.prx) is
+Copyright (c) 2026 XxXJoker13XxX and contributors.
+The JkFlow launcher is licensed under LGPL-2.1-or-later: the GNU Lesser
+General Public License as published by the Free Software Foundation, version
+2.1 or (at your option) any later version. The full text is
+LICENSES/LGPL-2.1.txt. Where to get the source: SOURCES.txt.
+
+Separate files that are not under the LGPL
+------------------------------------------
+These are separate DLLs that Patch copies into your Blur folder. They are
+not linked into the title:
+  - V7 frame pacer: blur-files/d3d9.dll (also installed as amax/dxvk.dll)
+  - S7 shader fixes: blur-files/d3d9_blur_dxvk.dll (also amax/d3d9_blur_dxvk.dll)
+V7 and S7 DLLs: Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+
+Native DXVK
+-----------
+Our changes to DXVK in the native renderer sce_module/dxvknative.prx and its
+client blur-files/d3d9.c988.dll: Copyright (c) 2026 XxXJoker13XxX. Free to
+use, copy and change, if every use names the author with the line
+"Native DXVK by XxXJoker13XxX". Full terms: LICENSES/JkFlow-Native-DXVK.txt.
+The DXVK base stays zlib/libpng.
+
+Third-party components
+----------------------
+Third-party components keep their own licences. See THIRD_PARTY.md for the
+list and LICENSES/ for the full texts:
+  - Wine and the Wine-based PS4 runtime: LGPL-2.1-or-later. The complete
+    corresponding source, with our changes, is published as described in
+    SOURCES.txt.
+  - DXVK: zlib/libpng
+  - Mesa / RADV: MIT
+  - Nunito font: SIL Open Font License 1.1
+  - FreeType: FreeType License (FTL)
+  - LLVM runtime: Apache-2.0 with the LLVM exception
+  - musl libc and orbis-compat: MIT
+
+JkFlow contains no files from Activision or AMAX. Patch for online play
+downloads blur_12.zip and amax_client_files.zip from amax-emu.com straight to
+your console. These files belong to their owners, and their terms apply.
+
+Blur is a trademark of Activision. The game is not included; you use your
+own copy. This is an unofficial fan project.
