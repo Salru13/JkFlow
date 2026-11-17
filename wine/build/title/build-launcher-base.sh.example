@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Build entry of the base title tree native298-package277 (the tree that
+# title/prepare_blur100.py starts from), as it was run; only the build-host
+# path is replaced by $JKFLOW_BUILD_ROOT. Its sources are
+# patches/title-base/0001-title-base.patch (see patches/series.txt, part 4).
+# The JkFlow 1.00 title itself is built by build-launcher.sh.example.
+set -euo pipefail
+base="${JKFLOW_BUILD_ROOT:?set JKFLOW_BUILD_ROOT to the build root}"
+out=$base/native298-package277
+export PATH="$base/native248-build-wine/tools:$base/private-bin:$base/deps/rootfs/usr/bin:$PATH"
+export MESA_BUILD=$base/native248-platform
+export TITLE_ID=GLDS10061 TITLE=Blur PW_BUILD_ID=GLDS10061-native298 PKG_VERSION=01.08
+export PW_ROOT="$out/prospero" PW_APP_OBJ="$out/app-obj" PW_BUILD_ROOT="$out/reloc-build"
+export PW_MODULE_STUBS_DIR="$base/native245-out/pkg-stage/sce_module"
+export N245_SEED_DIR="$base/native287-package/seed" N245_SEED_END=b49216c4c40116844d1c078c0435878521f336279ab7b192d20c56731418baac
+export PW_EBOOT_NO_RELRO=1 PW_SPLIT_RUNTIME=0 PW_WINE64_WAIT_WATCHDOG=0 PW_WINE64_SERVER_DIRECT_OFF=0 PW_WINE64_HEAP_FLEXIBLE=0
+export PW_PS4_ROOT="$base/orbis-win-9749fcd" TMPDIR="$out/tmp"
+unset PW_SHARED_LIBC PW_MESA_ZINK_DIR PS4_NTDLL32_DLL PS4_KERNELBASE32_DLL PS4_IPHLPAPI32_DLL
+bash "$out/orbis/scripts/build-relocatable-wine-ps4.sh"

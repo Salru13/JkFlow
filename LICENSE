@@ -22,23 +22,28 @@ Native DXVK
 -----------
 Our changes to DXVK in the native renderer sce_module/dxvknative.prx and its
 client blur-files/d3d9.c988.dll: Copyright (c) 2026 XxXJoker13XxX. Free to
-use, copy and change, if every use names the author with the line
-"Native DXVK by XxXJoker13XxX". Full terms: LICENSES/JkFlow-Native-DXVK.txt.
-The DXVK base stays zlib/libpng.
+use, copy, change and redistribute, if every release names the author with
+the line "Native DXVK by XxXJoker13XxX". Full terms:
+LICENSES/JkFlow-Native-DXVK.txt. The DXVK base stays zlib/libpng. The source
+of these changes is not published.
 
 Third-party components
 ----------------------
 Third-party components keep their own licences. See THIRD_PARTY.md for the
 list and LICENSES/ for the full texts:
-  - Wine and the Wine-based PS4 runtime: LGPL-2.1-or-later. The complete
-    corresponding source, with our changes, is published as described in
-    SOURCES.txt.
+  - Wine and the Wine-based PS4 runtime: LGPL-2.1-or-later. The source, with
+    our changes, is published as described in SOURCES.txt; what is not yet
+    complete is listed under "Gaps" in wine/BUILD.md of the source
+    repository.
   - DXVK: zlib/libpng
   - Mesa / RADV: MIT
   - Nunito font: SIL Open Font License 1.1
   - FreeType: FreeType License (FTL)
   - LLVM runtime: Apache-2.0 with the LLVM exception
   - musl libc and orbis-compat: MIT
+  - mingw-w64 runtime: ZPL-2.1 and others (in d3d9.c988.dll)
+  - puff (zlib contrib): Zlib
+  - and the further components listed in THIRD_PARTY.md
 
 JkFlow contains no files from Activision or AMAX. Patch for online play
 downloads blur_12.zip and amax_client_files.zip from amax-emu.com straight to

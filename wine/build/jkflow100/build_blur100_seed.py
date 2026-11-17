@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 shipping seed (plan Task E5): users\\BLUR, wowblur.dll, BLUR profile paths.
 
 Starts from the shipped native287 seed (order 284: END b49216c4, index f8f52c50) and its host

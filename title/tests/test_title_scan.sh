@@ -111,6 +111,14 @@ no "$main" 'saved-or-entered'
 no "$app" 'native280-username-ui'
 no "$app" 'native279-username-orbis.c'
 no "$tree/prospero/src/pw_launcher_render.c" 'pw_blur_name_setup_render'
+# Owner option A (2026-11-17): no Blur logo bitmap in the title; the uncalled
+# start page that drew it is gone, and no title source includes the bitmap.
+no "$tree/prospero/src/pw_launcher_render.c" 'pw_blur_start_render'
+no "$tree/prospero/src/pw_launcher_render.c" 'blur_logo('
+for f in "${title_sources[@]}" "$tree"/prospero/src/*.h "$tree"/prospero/native/*.h; do
+    [ "$(basename "$f")" = pw_blur_logo.h ] && continue
+    no "$f" 'pw_blur_logo'
+done
 
 # Audit finding 23 (text only): the line about the console's own message is on
 # the two screens whose Close ends in leave_to_home (E110, old data blocked)

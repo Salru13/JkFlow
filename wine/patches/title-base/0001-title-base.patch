@@ -1,0 +1,3329 @@
+diff -ruN a/orbis/scripts/build-app-ps4.sh b/orbis/scripts/build-app-ps4.sh
+--- a/orbis/scripts/build-app-ps4.sh
++++ b/orbis/scripts/build-app-ps4.sh
+@@ -83,13 +83,29 @@
+   0|1) ;;
+   *) echo "PW_WINE64_HEAP_FLEXIBLE must be 0 or 1" >&2; exit 2 ;;
+ esac
++# Task 245: the launcher patch calls the first-launch seed importer, so its
++# source must be present; a package that carries the Blur seed also pins the
++# seed index END hash into it (native245_seed.h). Without N245_SEED_DIR the
++# importer is compiled in but disabled.
++[[ -f $PW/native/native245_seed.c && -f $PW/native/native245_seed.h ]] || {
++  echo "missing $PW/native/native245_seed.{c,h} (task 245 launcher patch)" >&2; exit 2;
++}
++N245_DEF=""
++if [[ -n ${N245_SEED_DIR:-} ]]; then
++  [[ ${N245_SEED_END:-} =~ ^[0-9a-f]{64}$ ]] || { echo "N245_SEED_DIR needs N245_SEED_END (64 lowercase hex)" >&2; exit 2; }
++  [[ $N245_SEED_DIR == /* && -f $N245_SEED_DIR/seed245/blur-native248/seed.idx && -f $N245_SEED_DIR/runtime-pins.sha256 ]] || {
++    echo "N245_SEED_DIR is not an absolute native245_stage seed: $N245_SEED_DIR" >&2; exit 2;
++  }
++  N245_DEF="-DN245_SEED_END=\"$N245_SEED_END\""
++fi
+ CFL="-std=gnu11 -O2 -fPIC -DPW_BUILD_ID=\"${PW_BUILD_ID:-unknown-local}\" -DPW_WINE64_WAIT_WATCHDOG=$PW_WINE64_WAIT_WATCHDOG -DPW_WINE64_SERVER_DIRECT_OFF=$PW_WINE64_SERVER_DIRECT_OFF -DPW_WINE64_HEAP_FLEXIBLE=$PW_WINE64_HEAP_FLEXIBLE $INC $PS5LOG_NET"
+ 
+ say "compile: portable core (DBT + launcher) and the portable half of native/"
++CFL="$CFL $N245_DEF"
+ for f in "$PW"/src/*.c "$PW"/native/wine64_main.c "$PW"/native/pw_data_mount.c \
+          "$PW"/native/pw_diagnostics.c "$PW"/native/pw_wine_display.c \
+          "$PW"/native/pw_wine_library.c "$PW"/native/pw_wine_prefix.c \
+-         "$PW"/native/pw_osk_ps5.c "$PW"/native/ps5log/*.c; do
++         "$PW"/native/native279-username.c "$PW"/native/native279-username-orbis.c "$PW"/native/native279-username-env.c "$PW"/native/native280-username-ui.c "$PW"/native/native280-username-ui-file.c "$PW"/native/pw_osk_ps5.c "$PW"/native/native245_seed.c "$PW"/native/ps5log/*.c; do
+   [ -f "$f" ] || continue
+   $CC $CFL -c "$f" -o "$OBJ/$(echo "${f#$PW/}" | tr '/' '_' | sed 's/\.c$/.o/')"
+ done
+@@ -249,6 +265,16 @@
+   done
+   (( font_count > 0 )) || { echo "   X no Wine TTF fonts in $FONTDIR" >&2; exit 1; }
+   printf '   fonts: %s shared runtime TTFs\n' "$font_count"
++  # Task 245: the Blur first-launch seed (native245_stage output). Its runtime
++  # entries name the PE files packaged below, so it adds only registry/metadata.
++  if [[ -n ${N245_SEED_DIR:-} ]]; then
++    seed_count=0
++    while IFS= read -r -d '' f; do
++      EXTRA+=(--extra "$f:${f#"$N245_SEED_DIR"/}")
++      seed_count=$((seed_count+1))
++    done < <(find -L "$N245_SEED_DIR/seed245" -type f -print0 | sort -z)
++    printf '   seed245: %s files, END %s\n' "$seed_count" "$N245_SEED_END"
++  fi
+   # Wine's PE side: the shared runtime, beside the Unix modules.
+   #
+   # The Unix side loads some of these by path, before any Windows search path
+@@ -403,7 +429,7 @@
+     printf '   native WoW64 disabled: omitting wow64native.dll and PRX\n'
+   fi
+   printf '   modules: %s\n' "$(ls "$PRX"/sce_module/ | tr '\n' ' ')"
+-  "$BUNDLE/orbis-compat/scripts/ps4/make-pkg.sh" --eboot "$OBJ/../eboot.bin" --out-dir "$OUT" \
++  "$ROOT/scripts/native287-stage-pkg.sh" --eboot "$OBJ/../eboot.bin" --out-dir "$OUT" \
+       --title-id "$TITLE_ID" --title "$TITLE" "${EXTRA[@]}"
+   for m in libc.prx libSceFios2.prx; do
+     if [[ ! -f "$OUT/pkg-stage/sce_module/$m" ]] || ! cmp -s "$MODULE_STUBS_DIR/$m" "$OUT/pkg-stage/sce_module/$m"; then
+@@ -411,6 +437,17 @@
+       exit 1
+     fi
+   done
++  if [[ -n ${N245_SEED_DIR:-} ]]; then
++    if [[ -s $N245_SEED_DIR/runtime-pins.sha256 ]]; then
++      ( cd "$OUT/pkg-stage" && sha256sum --quiet --strict -c "$N245_SEED_DIR/runtime-pins.sha256" ) || {
++        echo "   X staged Wine PE runtime does not match the seed245 runtime pins" >&2; exit 1;
++      }
++    fi
++    staged_end=$(tail -c 65 "$OUT/pkg-stage/seed245/blur-native248/seed.idx" | head -c 64)
++    [[ $staged_end == "$N245_SEED_END" ]] || {
++      echo "   X staged seed245 END $staged_end is not N245_SEED_END $N245_SEED_END" >&2; exit 1;
++    }
++  fi
+   if [[ $PW_SKIP_NATIVE != 1 ]]; then
+     staged_wow64native="$OUT/pkg-stage/win/wine/lib/wine/x86_64-windows/wow64native.dll"
+     if [[ ! -f "$staged_wow64native" ]] || ! cmp -s "$WOW64NATIVE_DLL" "$staged_wow64native"; then
+@@ -429,5 +466,5 @@
+     exit 1
+   fi
+   (( NEO )) && "$ROOT/scripts/set-neo.sh" "$OUT"
+-  ls -la "$OUT"/*.pkg | sed 's/^/   /'
++  printf '   native287 base stage complete; final container follows\n'
+ fi
+diff -ruN a/orbis/scripts/build-relocatable-wine-ps4.sh b/orbis/scripts/build-relocatable-wine-ps4.sh
+--- a/orbis/scripts/build-relocatable-wine-ps4.sh
++++ b/orbis/scripts/build-relocatable-wine-ps4.sh
+@@ -66,7 +66,7 @@
+ }
+ 
+ echo "== build the normal app objects and complete runtime package stage"
+-APP_ARGS=(--pkg --relocatable-stage)
++APP_ARGS=(--relocatable-stage)
+ (( NEO )) && APP_ARGS+=(--neo)
+ TITLE_ID="$TITLE_ID" TITLE="$TITLE" PKG_OUT="$BASE_OUT" \
+ PW_ROOT="$PW" PW_APP_OBJ="$APP_OBJ" \
+@@ -145,89 +145,4 @@
+     --check-oelf --layout 0x55c000 0x7fff0000 0x80000000 "$BUILD/stub.oelf"
+ fi
+ 
+-echo "== package with a distinct title ID"
+-STAGE="$BASE_OUT/pkg-stage"
+-EXTRA=(--extra "$PRX_BUILD/relocated_wine_app.prx:sce_module/relocated_wine_app.prx")
+-if (( PW_SPLIT_RUNTIME )); then
+-  [[ -s "$STAGE/win/wine/lib/wine/x86_64-unix/ntdll.prx" ]] || {
+-    echo "split runtime source stage is missing ntdll.prx: $STAGE" >&2; exit 1;
+-  }
+-  [[ -f "$STAGE/win/wine/lib/wine/x86_64-windows/wow64native.dll" ]] || {
+-    echo "split runtime source stage is missing wow64native.dll: $STAGE" >&2; exit 1;
+-  }
+-  echo "== split runtime: package app and profiles; leave Wine modules/data in base stage for /data upload"
+-fi
+-while IFS= read -r -d '' file; do
+-  rel="${file#"$STAGE"/}"
+-  case "$rel" in
+-    eboot.bin|pkg.gp4|sce_sys/param.sfo|sce_sys/icon0.png|pkg-build.log|pkg-build-neo.log|build.log|*.pkg) continue ;;
+-  esac
+-  if (( PW_SPLIT_RUNTIME )); then
+-    case "$rel" in win/wine/*) continue ;; esac
+-    case "$rel" in
+-      sce_module/*.prx)
+-        module="${rel##*/}"
+-        case "$module" in libc.prx|libSceFios2.prx) ;; *) continue ;; esac
+-        ;;
+-    esac
+-  if [[ "$rel" == sce_module/relocated_wine_app.prx ]]; then
+-    continue
+-  fi
+-  fi
+-  EXTRA+=(--extra "$file:$rel")
+-done < <(find "$STAGE" -type f -print0)
+-# The home-screen icon: upstream prospero-win's mark (assets/prospero-win-logo.svg),
+-# rendered to 512x512 by scripts/render-logo-icon.py. Without it the title shows
+-# a blank tile on the PS4 home screen (2026-11-06).
+-ICON=${PS4_ICON:-$ROOT/assets/icon0.png}
+-[[ -f "$ICON" ]] || { echo "missing home-screen icon: $ICON" >&2; exit 1; }
+-"$BUNDLE/orbis-compat/scripts/ps4/make-pkg.sh" \
+-  --eboot "$BUILD/eboot.bin" --out-dir "$OUT" --icon "$ICON" \
+-  --title-id "$TITLE_ID" --title "$TITLE" ${PKG_VERSION:+--version "$PKG_VERSION"} "${EXTRA[@]}"
+-if (( NEO )); then
+-  "$ROOT/scripts/set-neo.sh" "$OUT"
+-fi
+-
+-PKG_FILE=$(find "$OUT" -maxdepth 1 -type f -name '*.pkg' -print -quit)
+-[[ -n "$PKG_FILE" && -s "$PKG_FILE" ]] || { echo "package was not created" >&2; exit 1; }
+-echo "== verify built image types and package contents"
+-llvm-readelf -h "$PRX_BUILD/app.shared.elf" | grep -F 'Type:                              DYN'
+-llvm-readelf -h "$BUILD/stub.elf" | grep -F 'Type:                              DYN'
+-test -s "$OUT/pkg-stage/sce_module/relocated_wine_app.prx"
+-cmp -s "$PRX_BUILD/relocated_wine_app.prx" "$OUT/pkg-stage/sce_module/relocated_wine_app.prx" || {
+-  echo "package staged a stale relocated_wine_app.prx" >&2; exit 1;
+-}
+-if (( PW_EBOOT_NO_RELRO )); then
+-  # Read the headers once and search the text. `llvm-readelf | grep -q` under
+-  # pipefail fails when grep exits on its first match while readelf is still
+-  # writing (SIGPIPE): CI run 42145205110 reported "lost PT_SCE_PROCPARAM"
+-  # for an oelf whose header dump above listed it.
+-  stub_headers=$(llvm-readelf -lW "$BUILD/stub.oelf") || {
+-    echo "llvm-readelf failed on $BUILD/stub.oelf (exit $?)" >&2; exit 1;
+-  }
+-  stub_check() {  # <pattern> <present|absent> <message>
+-    local found=0
+-    [[ $stub_headers == *"$1"* ]] && found=1
+-    if [[ $2 == present && $found == 0 || $2 == absent && $found == 1 ]]; then
+-      echo "$3" >&2; printf '%s\n' "$stub_headers" >&2; exit 1
+-    fi
+-  }
+-  stub_check 0x61000010 absent "no-RELRO build still contains PT_SCE_RELRO"
+-  stub_check 0x61000001 present "no-RELRO eboot lost PT_SCE_PROCPARAM"
+-  stub_check 0x61000000 present "no-RELRO eboot lost PT_SCE_DYNLIBDATA"
+-fi
+-if (( PW_SPLIT_RUNTIME )); then
+-  if find "$OUT/pkg-stage/win/wine" -type f -print -quit 2>/dev/null | grep -q .; then
+-    echo "split package unexpectedly contains Wine runtime files" >&2; exit 1;
+-  fi
+-  for module in libc.prx libSceFios2.prx relocated_wine_app.prx; do
+-    test -s "$OUT/pkg-stage/sce_module/$module"
+-  done
+-  for module in libc.prx libSceFios2.prx; do
+-    cmp -s "$MODULE_STUBS_DIR/$module" "$OUT/pkg-stage/sce_module/$module" || {
+-      echo "split app package staged the wrong $module" >&2; exit 1;
+-    }
+-  done
+-fi
+-echo "pkg: $PKG_FILE ($(du -h "$PKG_FILE" | cut -f1))"
+-sha256sum "$PKG_FILE"
++echo "== request268 launcher-only outputs complete; container-derived packaging is separate"
+diff -ruN a/orbis/scripts/native245-resume-reloc.sh b/orbis/scripts/native245-resume-reloc.sh
+--- a/orbis/scripts/native245-resume-reloc.sh
++++ b/orbis/scripts/native245-resume-reloc.sh
+@@ -0,0 +1,219 @@
++#!/usr/bin/env bash
++# Build a separate Wine title whose main code runs from a high-address PRX.
++# The tiny eboot hands off first; the PRX keeps the eboot mapped through Sony
++# setup and releases it immediately before the selected Windows process starts.
++set -euo pipefail
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
++PW="${PW_ROOT:-$ROOT/prospero-win}"
++MODULE_STUBS_DIR="${PW_MODULE_STUBS_DIR:-$ROOT/sce_module}"
++BUNDLE="$ROOT/sdk/orbis-sdk-v1"
++CC="$ROOT/build/ps4-wine-sdk/bin/prospero-clang"
++OO="$BUNDLE/sdk"
++TITLE_ID="${TITLE_ID:-GLDS10044}"
++TITLE="${TITLE:-Prospero Wine Low-Base Test}"
++# Package identity the launcher logs as `PW_WINE64 build_marker=...`, so every
++# console run is attributable to its package from the log alone.
++if [[ -z ${PW_BUILD_ID:-} ]]; then
++  pw_rev=$(git -C "$PW" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
++  [[ -z $(git -C "$PW" status --porcelain 2>/dev/null) ]] || pw_rev+="+dirty"
++  PW_BUILD_ID="${TITLE_ID}-${PKG_VERSION:-dev}-pw${pw_rev}"
++fi
++[[ $PW_BUILD_ID =~ ^[A-Za-z0-9._+-]+$ ]] || {
++  echo "PW_BUILD_ID may only contain [A-Za-z0-9._+-]: $PW_BUILD_ID" >&2; exit 2;
++}
++export PW_BUILD_ID
++OUT="${PKG_OUT:-$ROOT/pkgout/wine-app-relocatable}"
++BASE_OUT="${PKG_BASE_OUT:-$ROOT/pkgout/wine-app-relocatable-base}"
++BUILD="${PW_BUILD_ROOT:-$ROOT/build/wine-app-relocatable}"
++APP_OBJ="${PW_APP_OBJ:-$ROOT/build/wine-app/obj}"
++PRX="$PW/.deps/wine-ps5/prx"
++PW_WINE64_WAIT_WATCHDOG="${PW_WINE64_WAIT_WATCHDOG:-0}"
++PW_WINE64_SERVER_DIRECT_OFF="${PW_WINE64_SERVER_DIRECT_OFF:-0}"
++PW_WINE64_HEAP_FLEXIBLE="${PW_WINE64_HEAP_FLEXIBLE:-0}"
++PW_EBOOT_NO_RELRO="${PW_EBOOT_NO_RELRO:-1}"
++PS4_KERNELBASE32_DLL="${PS4_KERNELBASE32_DLL:-}"
++PS4_IPHLPAPI32_DLL="${PS4_IPHLPAPI32_DLL:-}"
++PW_SPLIT_RUNTIME="${PW_SPLIT_RUNTIME:-0}"
++NEO=0
++for a in "$@"; do
++  case "$a" in --neo) NEO=1 ;; esac
++done
++case "$PW_WINE64_WAIT_WATCHDOG" in
++  0|1) ;;
++  *) echo "PW_WINE64_WAIT_WATCHDOG must be 0 or 1" >&2; exit 2 ;;
++esac
++case "$PW_WINE64_SERVER_DIRECT_OFF" in
++  0|1) ;;
++  *) echo "PW_WINE64_SERVER_DIRECT_OFF must be 0 or 1" >&2; exit 2 ;;
++esac
++case "$PW_WINE64_HEAP_FLEXIBLE" in
++  0|1) ;;
++  *) echo "PW_WINE64_HEAP_FLEXIBLE must be 0 or 1" >&2; exit 2 ;;
++esac
++case "$PW_SPLIT_RUNTIME" in
++  0|1) ;;
++  *) echo "PW_SPLIT_RUNTIME must be 0 or 1" >&2; exit 2 ;;
++esac
++case "$PW_EBOOT_NO_RELRO" in
++  0|1) ;;
++  *) echo "PW_EBOOT_NO_RELRO must be 0 or 1" >&2; exit 2 ;;
++esac
++export OO_PS4_TOOLCHAIN="$OO"
++
++[[ -x "$CC" ]] || { echo "missing PS4 compiler: $CC" >&2; exit 1; }
++[[ -f "$MODULE_STUBS_DIR/libc.prx" && -f "$MODULE_STUBS_DIR/libSceFios2.prx" ]] || {
++  echo "missing required package stubs in $MODULE_STUBS_DIR" >&2; exit 1;
++}
++
++echo "== build the high-address Wine PRX"
++PRX_BUILD="$BUILD/prx"
++mkdir -p "$PRX_BUILD"
++"$CC" -std=gnu11 -O2 -fPIC -DPW_RELOCATABLE_WINE -DPW_BUILD_ID="\"$PW_BUILD_ID\"" \
++  -DPW_WINE64_WAIT_WATCHDOG="$PW_WINE64_WAIT_WATCHDOG" \
++  -DPW_WINE64_SERVER_DIRECT_OFF="$PW_WINE64_SERVER_DIRECT_OFF" \
++  -DPW_WINE64_HEAP_FLEXIBLE="$PW_WINE64_HEAP_FLEXIBLE" \
++  -I"$PW" -I"$PW/include" -I"$PW/src" -I"$PW/native" -I"$ROOT/src/native" \
++  -include "$PW/native/ps5log/ps5log_ps5_net.h" \
++  -c "$PW/native/wine64_main.c" -o "$PRX_BUILD/native_wine64_main_reloc.o"
++"$CC" -std=gnu11 -O2 -Wall -Wextra -Werror -fPIC \
++  -c "$ROOT/src/reloc-wine-app/app_entry.c" -o "$PRX_BUILD/app_entry.o"
++python3 "$PW/tools/gen_prx_descriptor.py" "$PRX_BUILD/descriptor.c" \
++  pw_relocated_wine_start
++"$CC" -std=gnu11 -O2 -fPIC -I"$PW/wine/ps5" \
++  -c "$PRX_BUILD/descriptor.c" -o "$PRX_BUILD/descriptor.o"
++APP_OBJECTS=()
++for object in "$APP_OBJ"/*.o; do
++  # The SDK's libwineshim.a supplies these three pure descriptor helpers too;
++  # retain the archive copy so the PRX does not define duplicate symbols.
++  [[ ${object##*/} == pw_wine_prx.o || ${object##*/} == native_wine64_main.o ]] && continue
++  APP_OBJECTS+=("$object")
++done
++APP_OBJECTS+=("$PRX_BUILD/native_wine64_main_reloc.o")
++"$CC" -shared -Wl,-Bsymbolic -Wl,-soname,relocated_wine_app.prx \
++  -Wl,--warn-unresolved-symbols -o "$PRX_BUILD/app.shared.elf" \
++  "${APP_OBJECTS[@]}" "$PRX_BUILD/app_entry.o" "$PRX_BUILD/descriptor.o" \
++  -lSceNet -lSceNetCtl -lSceAudioOut -lSceSystemService -lSceSysmodule -lSceGnmDriver \
++  -lSceVideoOut -lScePad -lSceUserService
++"$ROOT/scripts/create-fself-repro.sh" "$OO/bin/linux/create-fself" -in "$PRX_BUILD/app.shared.elf" \
++  -out "$PRX_BUILD/app.oelf" -lib "$PRX_BUILD/relocated_wine_app.prx" \
++  -libname relocated_wine_app.prx -ptype fake \
++  -library-path "$PRX_BUILD:$ROOT/build/ps4-wine-sdk:$OO/lib" \
++  >"$PRX_BUILD/create-fself.log" 2>&1 || {
++    cat "$PRX_BUILD/create-fself.log" >&2
++    echo "could not convert Wine app into a PRX" >&2
++    exit 1
++  }
++
++echo "== build the low-address handoff eboot"
++mkdir -p "$BUILD"
++python3 "$ROOT/scripts/gen-libkernel-symbol-list.py" \
++  "$OO/include/orbis/libkernel.h" "$BUILD/libkernel-symbols.inc"
++if (( PW_EBOOT_NO_RELRO )); then
++  PW_EXECUTABLE_LD_SCRIPT="$ROOT/src/reloc-wine-app/stub-no-relro.ld" \
++  PW_EXECUTABLE_NO_RELRO=1 PW_EXECUTABLE_NO_ORBIS_COMPAT=1 \
++    "$CC" -std=gnu11 -O2 -Wall -Wextra -Werror -fPIC \
++    -I"$PW/wine/ps5" -I"$BUILD" "$ROOT/src/reloc-wine-app/stub.c" \
++    -o "$BUILD/stub-linked.elf" -lSceNet -lSceAudioOut -lSceSystemService \
++    -lSceSysmodule -lSceGnmDriver -lSceVideoOut -lScePad -lSceUserService
++  python3 "$ROOT/scripts/prepare-orbis-stub-no-relro.py" \
++    --layout 0x55c000 0x7fff0000 0x80000000 \
++    "$BUILD/stub-linked.elf" "$BUILD/stub.elf"
++else
++  "$CC" -std=gnu11 -O2 -Wall -Wextra -Werror -fPIC \
++    -I"$PW/wine/ps5" -I"$BUILD" "$ROOT/src/reloc-wine-app/stub.c" \
++    -o "$BUILD/stub.elf" -lSceNet -lSceAudioOut -lSceSystemService \
++    -lSceSysmodule -lSceGnmDriver -lSceVideoOut -lScePad -lSceUserService
++fi
++"$ROOT/scripts/create-fself-repro.sh" "$OO/bin/linux/create-fself" -in "$BUILD/stub.elf" \
++  -out "$BUILD/stub.oelf" -eboot "$BUILD/eboot.bin" >/dev/null
++if (( PW_EBOOT_NO_RELRO )); then
++  python3 "$ROOT/scripts/prepare-orbis-stub-no-relro.py" \
++    --check-oelf --layout 0x55c000 0x7fff0000 0x80000000 "$BUILD/stub.oelf"
++fi
++
++echo "== package with a distinct title ID"
++STAGE="$BASE_OUT/pkg-stage"
++EXTRA=(--extra "$PRX_BUILD/relocated_wine_app.prx:sce_module/relocated_wine_app.prx")
++if (( PW_SPLIT_RUNTIME )); then
++  [[ -s "$STAGE/win/wine/lib/wine/x86_64-unix/ntdll.prx" ]] || {
++    echo "split runtime source stage is missing ntdll.prx: $STAGE" >&2; exit 1;
++  }
++  [[ -f "$STAGE/win/wine/lib/wine/x86_64-windows/wow64native.dll" ]] || {
++    echo "split runtime source stage is missing wow64native.dll: $STAGE" >&2; exit 1;
++  }
++  echo "== split runtime: package app and profiles; leave Wine modules/data in base stage for /data upload"
++fi
++while IFS= read -r -d '' file; do
++  rel="${file#"$STAGE"/}"
++  case "$rel" in
++    eboot.bin|pkg.gp4|sce_sys/param.sfo|sce_sys/icon0.png|pkg-build.log|pkg-build-neo.log|build.log|*.pkg) continue ;;
++  esac
++  if (( PW_SPLIT_RUNTIME )); then
++    case "$rel" in win/wine/*) continue ;; esac
++    case "$rel" in
++      sce_module/*.prx)
++        module="${rel##*/}"
++        case "$module" in libc.prx|libSceFios2.prx) ;; *) continue ;; esac
++        ;;
++    esac
++  if [[ "$rel" == sce_module/relocated_wine_app.prx ]]; then
++    continue
++  fi
++  fi
++  EXTRA+=(--extra "$file:$rel")
++done < <(find "$STAGE" -type f -print0)
++# The home-screen icon: upstream prospero-win's mark (assets/prospero-win-logo.svg),
++# rendered to 512x512 by scripts/render-logo-icon.py. Without it the title shows
++# a blank tile on the PS4 home screen (2026-11-06).
++ICON=${PS4_ICON:-$ROOT/assets/icon0.png}
++[[ -f "$ICON" ]] || { echo "missing home-screen icon: $ICON" >&2; exit 1; }
++"$BUNDLE/orbis-compat/scripts/ps4/make-pkg.sh" \
++  --eboot "$BUILD/eboot.bin" --out-dir "$OUT" --icon "$ICON" \
++  --title-id "$TITLE_ID" --title "$TITLE" ${PKG_VERSION:+--version "$PKG_VERSION"} "${EXTRA[@]}"
++if (( NEO )); then
++  "$ROOT/scripts/set-neo.sh" "$OUT"
++fi
++
++PKG_FILE=$(find "$OUT" -maxdepth 1 -type f -name '*.pkg' -print -quit)
++[[ -n "$PKG_FILE" && -s "$PKG_FILE" ]] || { echo "package was not created" >&2; exit 1; }
++echo "== verify built image types and package contents"
++llvm-readelf -h "$PRX_BUILD/app.shared.elf" | grep -F 'Type:                              DYN'
++llvm-readelf -h "$BUILD/stub.elf" | grep -F 'Type:                              DYN'
++test -s "$OUT/pkg-stage/sce_module/relocated_wine_app.prx"
++cmp -s "$PRX_BUILD/relocated_wine_app.prx" "$OUT/pkg-stage/sce_module/relocated_wine_app.prx" || {
++  echo "package staged a stale relocated_wine_app.prx" >&2; exit 1;
++}
++if (( PW_EBOOT_NO_RELRO )); then
++  # Read the headers once and search the text. `llvm-readelf | grep -q` under
++  # pipefail fails when grep exits on its first match while readelf is still
++  # writing (SIGPIPE): CI run 42145205110 reported "lost PT_SCE_PROCPARAM"
++  # for an oelf whose header dump above listed it.
++  stub_headers=$(llvm-readelf -lW "$BUILD/stub.oelf") || {
++    echo "llvm-readelf failed on $BUILD/stub.oelf (exit $?)" >&2; exit 1;
++  }
++  stub_check() {  # <pattern> <present|absent> <message>
++    local found=0
++    [[ $stub_headers == *"$1"* ]] && found=1
++    if [[ $2 == present && $found == 0 || $2 == absent && $found == 1 ]]; then
++      echo "$3" >&2; printf '%s\n' "$stub_headers" >&2; exit 1
++    fi
++  }
++  stub_check 0x61000010 absent "no-RELRO build still contains PT_SCE_RELRO"
++  stub_check 0x61000001 present "no-RELRO eboot lost PT_SCE_PROCPARAM"
++  stub_check 0x61000000 present "no-RELRO eboot lost PT_SCE_DYNLIBDATA"
++fi
++if (( PW_SPLIT_RUNTIME )); then
++  if find "$OUT/pkg-stage/win/wine" -type f -print -quit 2>/dev/null | grep -q .; then
++    echo "split package unexpectedly contains Wine runtime files" >&2; exit 1;
++  fi
++  for module in libc.prx libSceFios2.prx relocated_wine_app.prx; do
++    test -s "$OUT/pkg-stage/sce_module/$module"
++  done
++  for module in libc.prx libSceFios2.prx; do
++    cmp -s "$MODULE_STUBS_DIR/$module" "$OUT/pkg-stage/sce_module/$module" || {
++      echo "split app package staged the wrong $module" >&2; exit 1;
++    }
++  done
++fi
++echo "pkg: $PKG_FILE ($(du -h "$PKG_FILE" | cut -f1))"
++sha256sum "$PKG_FILE"
+diff -ruN a/orbis/scripts/native287-stage-pkg.sh b/orbis/scripts/native287-stage-pkg.sh
+--- a/orbis/scripts/native287-stage-pkg.sh
++++ b/orbis/scripts/native287-stage-pkg.sh
+@@ -0,0 +1,301 @@
++#!/usr/bin/env bash
++# Build a fake-signed PS4 .pkg from an already-created eboot.bin.
++#
++#   scripts/ps4/make-pkg.sh --eboot <eboot.bin> --out-dir <dir> \
++#       --title-id TMPS10001 --title "Tempest Hello" [--version 01.00] \
++#       [--content-label TEMPESTHELLO0000] [--icon <png>] [--sdk <path>] \
++#       [--extra <src>:<targ_path>]...
++#
++# Recipe mirrors the OpenOrbis SDK sample rule (samples/hello_world/Makefile),
++# which is the only normative description of the packaging steps:
++#   PkgTool.Core sfo_new / sfo_setentry  -> sce_sys/param.sfo
++#   create-gp4 --content-id --files      -> pkg.gp4
++#   PkgTool.Core pkg_build               -> <CONTENT_ID>.pkg
++#
++# PkgTool.Core is an old self-contained .NET build with two host quirks:
++#   * its crypto shim dlopen()s OpenSSL 1.x by soname and knows nothing of 3 -> see the probe
++#   * it has no ICU in its closure -> DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
++# The flake devShell exports both; outside it this script resolves the library itself.
++set -euo pipefail
++
++die() { echo "make-pkg: $*" >&2; exit 1; }
++
++EBOOT=""
++OUT_DIR=""
++TITLE_ID=""
++TITLE=""
++VERSION="01.00"
++CONTENT_LABEL=""
++ICON=""
++SDK="${OO_PS4_TOOLCHAIN:-$HOME/.local/opt/openorbis}"
++EXTRAS=()
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --eboot)         EBOOT="$2";         shift 2 ;;
++    --out-dir)       OUT_DIR="$2";       shift 2 ;;
++    --title-id)      TITLE_ID="$2";      shift 2 ;;
++    --title)         TITLE="$2";         shift 2 ;;
++    --version)       VERSION="$2";       shift 2 ;;
++    --content-label) CONTENT_LABEL="$2"; shift 2 ;;
++    --icon)          ICON="$2";          shift 2 ;;
++    --sdk)           SDK="$2";           shift 2 ;;
++    --extra)         EXTRAS+=("$2");     shift 2 ;;
++    -h|--help)       sed -n '2,12p' "$0"; exit 0 ;;
++    *)               die "unknown argument: $1" ;;
++  esac
++done
++
++[[ -n "$EBOOT"    ]] || die "--eboot is required"
++[[ -n "$OUT_DIR"  ]] || die "--out-dir is required"
++[[ -n "$TITLE_ID" ]] || die "--title-id is required"
++[[ -n "$TITLE"    ]] || die "--title is required"
++[[ -f "$EBOOT"    ]] || die "eboot not found: $EBOOT"
++
++# TITLE_ID is 4 letters + 5 digits; param.sfo and the content ID both embed it.
++[[ "$TITLE_ID" =~ ^[A-Z]{4}[0-9]{5}$ ]] || die "TITLE_ID must be AAAA00000, got '$TITLE_ID'"
++
++if [[ "$(uname -s)" == "Darwin" ]]; then
++  BINDIR="$SDK/bin/macos"
++else
++  BINDIR="$SDK/bin/linux"
++fi
++PKGTOOL="$BINDIR/PkgTool.Core"
++CREATE_GP4="$BINDIR/create-gp4"
++[[ -x "$PKGTOOL"    ]] || die "PkgTool.Core not found at $PKGTOOL (set OO_PS4_TOOLCHAIN)"
++[[ -x "$CREATE_GP4" ]] || die "create-gp4 not found at $CREATE_GP4 (set OO_PS4_TOOLCHAIN)"
++
++# CONTENT_ID layout, copied from every OpenOrbis sample:
++#   <6-char publisher>-<TITLE_ID>_00-<16-char label>
++if [[ -z "$CONTENT_LABEL" ]]; then
++  CONTENT_LABEL="$TITLE_ID"
++fi
++CONTENT_LABEL="${CONTENT_LABEL^^}"
++CONTENT_LABEL="${CONTENT_LABEL//[^A-Z0-9]/}"
++CONTENT_LABEL="${CONTENT_LABEL}0000000000000000"
++CONTENT_LABEL="${CONTENT_LABEL:0:16}"
++CONTENT_ID="IV0000-${TITLE_ID}_00-${CONTENT_LABEL}"
++
++export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
++
++# ⚠ WHAT PkgTool.Core ACTUALLY DLOPENS, measured with `strings bin/linux/PkgTool.Core`: five
++# candidate sonames - libssl.so.1.1, libssl.so.1.0.2, libssl.so.1.0.0, libssl.so.10, libssl.so. -
++# and libssl.so.3 is NOT among them. So every current distro and every GitHub runner, which ship
++# OpenSSL 3 alone, build and link the port 100%, produce an eboot, and only THEN die in pkg_build
++# with "No usable version of libssl was found" - core dumped, and make deletes the fresh .elf on
++# its way out. bin/macos/PkgTool.Core names none of those sonames (no libssl/libcrypto string in
++# the binary at all; `otool -L` lists libc++ and libSystem only) because the macOS .NET build uses
++# Apple's crypto - nothing here is fatal on Darwin.
++#
++# ⚠ THIS PROBE USED TO BE THREE COPIES OF A WORKFLOW STEP - orbis-compat sdk-bundle.yml,
++# OpenGothic ps4.yml, RetroArch frontend.yml - each unpacking the same .deb into a different
++# directory and exporting PS4_PKGTOOL_OPENSSL_LIB. It belongs in the one place that runs
++# PkgTool.Core. Order is by cost: what the caller already knows, then what the host already has,
++# then the network.
++openssl1x_dir() {
++  local dir soname
++  # 1.1 first because it is what the OpenOrbis samples were built against; the 1.0 sonames are
++  # accepted by the same shim and are what an older or a compat package provides.
++  local sonames=(
++    libssl.so.1.1 libssl.so.1.0.2 libssl.so.1.0.0 libssl.so.10
++    libssl.1.1.dylib libssl.1.0.0.dylib
++  )
++  # Linux first (the only platform where this is load-bearing), macOS after it. Homebrew's
++  # openssl@1.1 is keg-only, so it is never on the default loader path and has to be named;
++  # both prefixes are listed because `brew --prefix` is absent on a host without Homebrew.
++  local dirs=(
++    /nix/store/*-openssl-1.1*/lib
++    /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /usr/local/lib /usr/lib
++    /opt/homebrew/opt/openssl@1.1/lib /usr/local/opt/openssl@1.1/lib
++  )
++  local brew_lib
++  if command -v brew >/dev/null 2>&1; then
++    brew_lib="$(brew --prefix openssl@1.1 2>/dev/null || true)"
++    [[ -n "$brew_lib" ]] && dirs=("$brew_lib/lib" "${dirs[@]}")
++  fi
++  for dir in "${dirs[@]}"; do
++    [[ -d "$dir" ]] || continue   # an unmatched /nix/store glob arrives here literally
++    for soname in "${sonames[@]}"; do
++      [[ -e "$dir/$soname" ]] && { printf '%s\n' "$dir"; return 0; }
++    done
++  done
++  return 1
++}
++
++# Ubuntu dropped libssl1.1 from the archive at noble, so there is no package to apt-get install;
++# the security pool still publishes the .deb and it gets unpacked by hand. The exact filename
++# floats with the pool's latest security upload, so it is discovered rather than named. Cached
++# under orbis-env.sh's work root, so a second package build in the same checkout refetches
++# nothing. amd64 only - the .deb has no other arch and the tool is an x86-64 ELF anyway.
++fetch_openssl1x() {
++  local lib="${ORBIS_WORK:-${XDG_CACHE_HOME:-${HOME}/.cache}/orbis-ports}/openssl11/lib"
++  if [[ ! -e "$lib/libssl.so.1.1" ]]; then
++    local base=http://security.ubuntu.com/ubuntu/pool/main/o/openssl
++    local tmp; tmp="$(mktemp -d)"
++    command -v dpkg-deb >/dev/null 2>&1 \
++      || die "no OpenSSL 1.x for PkgTool.Core and no dpkg-deb to unpack one; install your distro's OpenSSL 1.1 compat package or set PS4_PKGTOOL_OPENSSL_LIB"
++    curl -sSfL --max-time 120 -o "$tmp/index.html" "$base/" \
++      || die "cannot reach $base to fetch libssl1.1; set PS4_PKGTOOL_OPENSSL_LIB to a directory holding libssl.so.1.1"
++    # Read the saved index rather than piping curl into grep: under `set -o pipefail` a grep that
++    # matches nothing takes the whole pipeline's status and the die below would never be reached.
++    local deb
++    deb="$(LC_ALL=C grep -oE 'libssl1\.1_[^"]*_amd64\.deb' "$tmp/index.html" | LC_ALL=C sort -V | tail -1 || true)"
++    [[ -n "$deb" ]] || die "no libssl1.1 .deb listed at $base; set PS4_PKGTOOL_OPENSSL_LIB instead"
++    curl -sSfL --max-time 120 -o "$tmp/libssl.deb" "$base/$deb" || die "failed to download $base/$deb"
++    dpkg-deb -x "$tmp/libssl.deb" "$tmp/x"
++    mkdir -p "$lib"
++    # libcrypto too: the shim resolves its symbols out of the same directory and a lone libssl
++    # would dlopen and then fail on the first EVP call.
++    cp -a "$tmp"/x/usr/lib/x86_64-linux-gnu/lib{ssl,crypto}.so.1.1 "$lib"/
++    rm -rf "$tmp"
++  fi
++  printf '%s\n' "$lib"
++}
++
++if [[ -z "${PS4_PKGTOOL_OPENSSL_LIB:-}" ]]; then
++  PS4_PKGTOOL_OPENSSL_LIB="$(openssl1x_dir || true)"
++fi
++if [[ -z "$PS4_PKGTOOL_OPENSSL_LIB" && "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
++  PS4_PKGTOOL_OPENSSL_LIB="$(fetch_openssl1x)"
++fi
++if [[ -n "$PS4_PKGTOOL_OPENSSL_LIB" ]]; then
++  # Both loader variables, not one per platform: the Linux tool reads LD_LIBRARY_PATH, dyld reads
++  # DYLD_LIBRARY_PATH, and setting the one the host ignores costs nothing.
++  export LD_LIBRARY_PATH="${PS4_PKGTOOL_OPENSSL_LIB}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
++  export DYLD_LIBRARY_PATH="${PS4_PKGTOOL_OPENSSL_LIB}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
++elif [[ "$(uname -s)" != "Darwin" ]]; then
++  die "no libssl.so.1.1 for PkgTool.Core on $(uname -s)/$(uname -m); install an OpenSSL 1.1 compat package (Fedora/RHEL: compat-openssl11, Arch: openssl-1.1, nix: nixpkgs#openssl_1_1) or set PS4_PKGTOOL_OPENSSL_LIB to the directory holding it"
++fi
++
++STAGE="$OUT_DIR/pkg-stage"
++rm -rf "$STAGE"
++mkdir -p "$STAGE/sce_sys" "$STAGE/sce_module"
++
++cp -f "$EBOOT" "$STAGE/eboot.bin"
++
++# libc / libSceFios2 are the two PRXs every OpenOrbis title ships; the loader
++# resolves them from /app0/sce_module before falling back to system modules.
++for prx in libc libSceFios2; do
++  if [[ -f "$SDK/src/modules/$prx.prx" ]]; then
++    cp -f "$SDK/src/modules/$prx.prx" "$STAGE/sce_module/$prx.prx"
++  fi
++done
++
++GP4_FILES=("eboot.bin" "sce_sys/param.sfo")
++for prx in libc libSceFios2; do
++  [[ -f "$STAGE/sce_module/$prx.prx" ]] && GP4_FILES+=("sce_module/$prx.prx")
++done
++
++if [[ -n "$ICON" && -f "$ICON" ]]; then
++  cp -f "$ICON" "$STAGE/sce_sys/icon0.png"
++  GP4_FILES+=("sce_sys/icon0.png")
++fi
++
++EXTRA_DIRS=()
++for spec in ${EXTRAS+"${EXTRAS[@]}"}; do
++  src="${spec%%:*}"
++  targ="${spec#*:}"
++  [[ -f "$src" ]] || die "extra file not found: $src"
++  mkdir -p "$STAGE/$(dirname "$targ")"
++  cp -f "$src" "$STAGE/$targ"
++  GP4_FILES+=("$targ")
++  # Every ancestor directory of the target, because of the .gp4 quirk below.
++  d="$(dirname "$targ")"
++  while [[ "$d" != "." && "$d" != "/" ]]; do
++    EXTRA_DIRS+=("$d")
++    d="$(dirname "$d")"
++  done
++done
++
++# create-gp4 emits a FIXED <rootdir>: sce_sys (+about), sce_module and assets with five
++# hard-coded children. LibOrbisPkg's PfsProperties.BuildFSTree then resolves every file's
++# targ_path against that tree, and a file in a directory the tree does not declare dies in
++# FindDir with "Sequence contains no elements" - so --extra has only ever worked for a
++# target at the package root or inside one of those seven directories. ps4/gapi-suite is
++# the first caller to pass --extra at all (it ships /app0/shader and /app0/assets/gapi, the
++# paths Tests/tests/gapi's own bodies open), and it needs two directories create-gp4 does
++# not know about.
++#
++# So the rootdir is REBUILT here from the union of what create-gp4 declared and what the
++# extras need, rather than appended to: a second top-level <dir targ_name="assets"> would
++# be a different node from the first, and FindDir would keep finding the one without the
++# new child. Runs only when there are extras, so a package without them is byte-identical
++# to what this script produced before.
++gp4_patch_rootdir() {
++  local gp4="$1"; shift
++  [[ "$#" -gt 0 ]] || return 0
++  local tmp; tmp="$(mktemp)"
++  {
++    sed -n '1,/<rootdir>/p' "$gp4"
++    {
++      # Directories create-gp4 declared, as full paths.
++      awk '
++        /<rootdir>/ { inr=1; next }
++        /<\/rootdir>/ { inr=0 }
++        !inr { next }
++        {
++          line=$0
++          if(match(line,/targ_name="[^"]*"/)) {
++            name=substr(line,RSTART+11,RLENGTH-12)
++            path=(depth>0 ? stack[depth] "/" name : name)
++            print path
++            if(line ~ /\/>[[:space:]]*$/) next
++            stack[++depth]=path
++            next
++          }
++          if(line ~ /<\/dir>/) depth--
++        }' "$gp4"
++      printf '%s\n' "$@"
++    } | LC_ALL=C sort -u | awk -F/ '
++        {
++          # Close deeper-or-equal levels, then open this one. Paths arrive sorted, so a
++          # parent always precedes its children.
++          while(open>0 && substr($0,1,length(cur[open])+1)!=(cur[open] "/")) {
++            printf("%s</dir>\n",ind(open)); open--
++          }
++          cur[++open]=$0
++          printf("%s<dir targ_name=\"%s\">\n",ind(open),$NF)
++        }
++        END { while(open>0) { printf("%s</dir>\n",ind(open)); open-- } }
++        function ind(n,  s,i) { s="\t\t"; for(i=1;i<n;i++) s=s "\t"; return s }'
++    sed -n '/<\/rootdir>/,$p' "$gp4"
++  } > "$tmp"
++  mv -f "$tmp" "$gp4"
++}
++
++SFO="$STAGE/sce_sys/param.sfo"
++"$PKGTOOL" sfo_new "$SFO" > /dev/null
++sfo_set() { "$PKGTOOL" sfo_setentry "$SFO" "$1" --type "$2" --maxsize "$3" --value "$4" > /dev/null; }
++sfo_set APP_TYPE           Integer 4   1
++sfo_set APP_VER            Utf8    8   "$VERSION"
++sfo_set ATTRIBUTE          Integer 4   0
++sfo_set CATEGORY           Utf8    4   gd
++sfo_set CONTENT_ID         Utf8    48  "$CONTENT_ID"
++sfo_set DOWNLOAD_DATA_SIZE Integer 4   0
++sfo_set SYSTEM_VER         Integer 4   0
++sfo_set TITLE              Utf8    128 "$TITLE"
++sfo_set TITLE_ID           Utf8    12  "$TITLE_ID"
++sfo_set VERSION            Utf8    8   "$VERSION"
++
++# Native287 private base stage only; final builder creates and validates the PKG.
++exit 0
++# create-gp4 records orig_path verbatim, so it must run with the stage as cwd.
++(
++  cd "$STAGE"
++  "$CREATE_GP4" -out pkg.gp4 --content-id="$CONTENT_ID" --files "${GP4_FILES[*]}" > /dev/null
++  gp4_patch_rootdir pkg.gp4 ${EXTRA_DIRS+"${EXTRA_DIRS[@]}"}
++  "$PKGTOOL" pkg_build pkg.gp4 . > pkg-build.log 2>&1 || {
++    cat pkg-build.log >&2
++    exit 1
++  }
++)
++
++PKG="$STAGE/$CONTENT_ID.pkg"
++[[ -f "$PKG" ]] || {
++  sed -n '1,40p' "$STAGE/pkg-build.log" >&2 2>/dev/null || true
++  die "PkgTool.Core produced no $CONTENT_ID.pkg"
++}
++
++mv -f "$PKG" "$OUT_DIR/$CONTENT_ID.pkg"
++ln -sf "$CONTENT_ID.pkg" "$OUT_DIR/$TITLE_ID.pkg"
++echo "pkg: $OUT_DIR/$CONTENT_ID.pkg ($(du -h "$OUT_DIR/$CONTENT_ID.pkg" | cut -f1))"
+diff -ruN a/orbis/src/native/pw_pad_ps4.c b/orbis/src/native/pw_pad_ps4.c
+--- a/orbis/src/native/pw_pad_ps4.c
++++ b/orbis/src/native/pw_pad_ps4.c
+@@ -37,6 +37,18 @@
+ }
+ static int platform_pad_close(int32_t h)           { return scePadClose(h); }
+ 
++/* The other signed-in users. Without this the shared core finds no extra
++ * players, so XInput controllers 1..3 never open. An empty entry is -1, which
++ * the core already skips. */
++static int platform_login_users(int32_t ids[PW_PAD_PS5_USERS])
++{
++    OrbisUserServiceLoginUserIdList list;
++    int rc = sceUserServiceGetLoginUserIdList(&list);
++    if (rc < 0) return rc;
++    for (int i = 0; i < PW_PAD_PS5_USERS; i++) ids[i] = list.userId[i];
++    return 0;
++}
++
+ static int platform_pad_set_vibration(int32_t h, const uint8_t motors[2])
+ {
+     /* OrbisPadVibeParam is {lgMotor, smMotor} — two bytes in the same order the
+@@ -99,6 +111,7 @@
+         .pad_read          = platform_pad_read,
+         .pad_close         = platform_pad_close,
+         .pad_set_vibration = platform_pad_set_vibration,
++        .login_users       = platform_login_users,
+     };
+     return PW_OK;
+ }
+diff -ruN a/prospero/native/native245_seed.c b/prospero/native/native245_seed.c
+--- a/prospero/native/native245_seed.c
++++ b/prospero/native/native245_seed.c
+@@ -0,0 +1,945 @@
++/* native245_seed.c -- first-launch seed importer (task 245). See native245_seed.h.
++ *
++ * Source anchors (pinned orbis-win 61c03197 == release 9749fcd for src/ and
++ * scripts/, research/agents/native-source-parity.md):
++ *   research/agents/orbis-win-architecture/native-wine64_main.c
++ *     101-108  runtime_roots = { "/app0", PW_SANDBOX_APP0 }: where package files are seen
++ *     110-115  library root /data/prospero-win after the grant
++ *     777-812  open_library(): grant, then pw_wine_library_load(library_root)
++ *     1186-1189 prefix = <root>/prefixes/<profile prefix>
++ *     1300-1310 launcher copies the CPU DLL into <prefix>/drive_c/windows/system32
++ *   research/agents/orbis-win-architecture/native-pw_wine_library.c
++ *     18,42-54  only "<[a-z0-9_-]+>.profile" names are profiles (a ".n245part" temp is invisible)
++ *     154-194   profiles.lst (when present) replaces the directory scan; a bad index hides all
++ *     196-203   first parsed entry with the id wins
++ *   research/agents/orbis-win-architecture/native-pw_wine_prefix.c
++ *     12-22     mkdir 0777, temp ".new" + rename idiom reused here
++ */
++#include "native245_seed.h"
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <unistd.h>
++
++#ifdef N245_TEST_HOOKS
++int (*n245_test_fault)(const char *op, const char *path) = NULL;
++int n245_test_skip_fsync = 0;
++#define N245_FAULT(op, path) (n245_test_fault && n245_test_fault((op), (path)))
++#define N245_FSYNC(fd) (n245_test_skip_fsync ? 0 : fsync(fd))
++#else
++#define N245_FAULT(op, path) 0
++#define N245_FSYNC(fd) fsync(fd)
++#endif
++
++/* ------------------------------------------------------------------ SHA-256 */
++static const uint32_t n245_k[64] = {
++    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
++    0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
++    0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
++    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
++    0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
++    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
++    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
++    0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u};
++
++static uint32_t n245_ror(uint32_t x, unsigned n) { return (x >> n) | (x << (32u - n)); }
++
++static void n245_sha256_block(N245Sha256 *s, const unsigned char *p)
++{
++    uint32_t w[64], a, b, c, d, e, f, g, h;
++    unsigned i;
++    for (i = 0; i < 16; i++)
++        w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 |
++               (uint32_t)p[4 * i + 3];
++    for (i = 16; i < 64; i++) {
++        uint32_t s0 = n245_ror(w[i - 15], 7) ^ n245_ror(w[i - 15], 18) ^ (w[i - 15] >> 3);
++        uint32_t s1 = n245_ror(w[i - 2], 17) ^ n245_ror(w[i - 2], 19) ^ (w[i - 2] >> 10);
++        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
++    }
++    a = s->h[0]; b = s->h[1]; c = s->h[2]; d = s->h[3];
++    e = s->h[4]; f = s->h[5]; g = s->h[6]; h = s->h[7];
++    for (i = 0; i < 64; i++) {
++        uint32_t t1 = h + (n245_ror(e, 6) ^ n245_ror(e, 11) ^ n245_ror(e, 25)) + ((e & f) ^ (~e & g)) +
++                      n245_k[i] + w[i];
++        uint32_t t2 = (n245_ror(a, 2) ^ n245_ror(a, 13) ^ n245_ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
++        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
++    }
++    s->h[0] += a; s->h[1] += b; s->h[2] += c; s->h[3] += d;
++    s->h[4] += e; s->h[5] += f; s->h[6] += g; s->h[7] += h;
++}
++
++void n245_sha256_init(N245Sha256 *s)
++{
++    static const uint32_t iv[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
++                                   0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
++    memcpy(s->h, iv, sizeof(iv));
++    s->length = 0;
++    s->used = 0;
++}
++
++void n245_sha256_update(N245Sha256 *s, const void *data, size_t size)
++{
++    const unsigned char *p = (const unsigned char *)data;
++    s->length += size;
++    while (size) {
++        size_t take = 64 - s->used;
++        if (take > size) take = size;
++        memcpy(s->block + s->used, p, take);
++        s->used += take;
++        p += take;
++        size -= take;
++        if (s->used == 64) {
++            n245_sha256_block(s, s->block);
++            s->used = 0;
++        }
++    }
++}
++
++void n245_sha256_hex(N245Sha256 *s, char out[65])
++{
++    static const char digits[] = "0123456789abcdef";
++    uint64_t bits = s->length * 8u;
++    unsigned char pad = 0x80, zero = 0, len[8];
++    unsigned i;
++    n245_sha256_update(s, &pad, 1);
++    while (s->used != 56) n245_sha256_update(s, &zero, 1);
++    for (i = 0; i < 8; i++) len[i] = (unsigned char)(bits >> (56 - 8 * i));
++    n245_sha256_update(s, len, 8);
++    for (i = 0; i < 32; i++) {
++        unsigned char byte = (unsigned char)(s->h[i / 4] >> (24 - 8 * (i % 4)));
++        out[2 * i] = digits[byte >> 4];
++        out[2 * i + 1] = digits[byte & 15];
++    }
++    out[64] = 0;
++}
++
++static void n245_sha256_of(const void *data, size_t size, char out[65])
++{
++    N245Sha256 s;
++    n245_sha256_init(&s);
++    n245_sha256_update(&s, data, size);
++    n245_sha256_hex(&s, out);
++}
++
++/* ------------------------------------------------------------------ pin */
++const char *n245_seed_pinned_end(void)
++{
++#ifdef N245_SEED_END
++    return N245_SEED_END;
++#else
++    return NULL;
++#endif
++}
++
++const char *n245_status_name(N245Status status)
++{
++    switch (status) {
++    case N245_IMPORTED: return "imported";
++    case N245_PRESENT: return "present";
++    case N245_PRESENT_EXTERNAL: return "present-external";
++    case N245_RESUMED_PUBLISH: return "resumed-publish";
++    case N245_DISABLED: return "disabled";
++    case N245_NO_SEED: return "no-seed";
++    case N245_REFUSED_FOREIGN_PROFILE: return "refused-foreign-profile";
++    case N245_REFUSED_FOREIGN_PREFIX: return "refused-foreign-prefix";
++    case N245_REFUSED_CONFLICT: return "refused-conflict";
++    case N245_REFUSED_CATALOG: return "refused-catalog";
++    case N245_REFUSED_STAGING: return "refused-staging";
++    case N245_REFUSED_PREFIX_MODIFIED: return "refused-prefix-modified";
++    case N245_ERR_SEED: return "err-seed";
++    case N245_ERR_IO: return "err-io";
++    case N245_ERR_ARGS: return "err-args";
++    }
++    return "unknown";
++}
++
++/* ------------------------------------------------------------------ helpers */
++static int n245_is_hex64(const char *s)
++{
++    size_t i;
++    for (i = 0; i < 64; i++)
++        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0;
++    return s[64] == 0;
++}
++
++static int n245_join(char *out, size_t size, const char *a, const char *b)
++{
++    int n = snprintf(out, size, "%s/%s", a, b);
++    return n >= 0 && (size_t)n < size;
++}
++
++static int n245_join3(char *out, size_t size, const char *a, const char *b, const char *c)
++{
++    int n = snprintf(out, size, "%s/%s/%s", a, b, c);
++    return n >= 0 && (size_t)n < size;
++}
++
++static int n245_ends_with(const char *s, const char *suffix)
++{
++    size_t a = strlen(s), b = strlen(suffix);
++    return a >= b && !memcmp(s + a - b, suffix, b);
++}
++
++/* Whole file up to limit bytes into a malloc'd, NUL-terminated buffer.
++ * 0 ok, -1 absent (ENOENT), -2 other read error, -3 larger than limit. */
++static int n245_read_all(const char *path, size_t limit, char **data, size_t *size)
++{
++    int fd = open(path, O_RDONLY);
++    size_t used = 0, cap = 4096;
++    char *buf;
++    if (fd < 0) return errno == ENOENT || errno == ENOTDIR ? -1 : -2;
++    buf = (char *)malloc(cap + 1);
++    if (!buf) { close(fd); return -2; }
++    for (;;) {
++        ssize_t got;
++        if (used == cap) {
++            char *bigger;
++            if (cap > limit) { free(buf); close(fd); return -3; }
++            cap *= 2;
++            bigger = (char *)realloc(buf, cap + 1);
++            if (!bigger) { free(buf); close(fd); return -2; }
++            buf = bigger;
++        }
++        got = read(fd, buf + used, cap - used);
++        if (got < 0) { if (errno == EINTR) continue; free(buf); close(fd); return -2; }
++        if (!got) break;
++        used += (size_t)got;
++        if (used > limit) { free(buf); close(fd); return -3; }
++    }
++    close(fd);
++    buf[used] = 0;
++    *data = buf;
++    *size = used;
++    return 0;
++}
++
++/* SHA-256 + size of a file. 0 ok, -1 absent, -2 error. */
++static int n245_hash_file(const char *path, char hex[65], unsigned long long *size)
++{
++    static unsigned char buf[64 * 1024];
++    N245Sha256 s;
++    int fd = open(path, O_RDONLY);
++    if (fd < 0) return errno == ENOENT || errno == ENOTDIR ? -1 : -2;
++    n245_sha256_init(&s);
++    *size = 0;
++    for (;;) {
++        ssize_t got = read(fd, buf, sizeof(buf));
++        if (got < 0) { if (errno == EINTR) continue; close(fd); return -2; }
++        if (!got) break;
++        n245_sha256_update(&s, buf, (size_t)got);
++        *size += (unsigned long long)got;
++    }
++    close(fd);
++    n245_sha256_hex(&s, hex);
++    return 0;
++}
++
++static int n245_exists(const char *path, int *is_dir)
++{
++    struct stat st;
++    if (stat(path, &st) != 0) return 0;
++    if (is_dir) *is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
++    return 1;
++}
++
++static void n245_sync_dir(const char *path)
++{
++    int fd = open(path, O_RDONLY | O_DIRECTORY);
++    if (fd >= 0) { (void)N245_FSYNC(fd); close(fd); }   /* best effort: not every FS allows it */
++}
++
++static int n245_mkdir_one(const char *path)
++{
++    int is_dir = 0;
++    if (n245_exists(path, &is_dir)) return is_dir ? 0 : -1;
++    if (N245_FAULT("mkdir", path)) return -1;
++    if (mkdir(path, 0777) != 0 && errno != EEXIST) return -1;
++    return n245_exists(path, &is_dir) && is_dir ? 0 : -1;
++}
++
++/* mkdir -p for an absolute path. */
++static int n245_mkdir_p(const char *path)
++{
++    char tmp[N245_PATH_MAX];
++    size_t i, n = strlen(path);
++    if (n == 0 || n >= sizeof(tmp)) return -1;
++    memcpy(tmp, path, n + 1);
++    for (i = 1; i < n; i++) {
++        if (tmp[i] != '/') continue;
++        tmp[i] = 0;
++        if (n245_mkdir_one(tmp)) return -1;
++        tmp[i] = '/';
++    }
++    return n245_mkdir_one(tmp);
++}
++
++static int n245_mkdir_parent(const char *path)
++{
++    char tmp[N245_PATH_MAX];
++    const char *slash = strrchr(path, '/');
++    size_t n;
++    if (!slash) return -1;
++    n = (size_t)(slash - path);
++    if (n == 0) return 0;
++    if (n >= sizeof(tmp)) return -1;
++    memcpy(tmp, path, n);
++    tmp[n] = 0;
++    return n245_mkdir_p(tmp);
++}
++
++static int n245_write_all(int fd, const char *path, const void *data, size_t size)
++{
++    const char *p = (const char *)data;
++    (void)path;   /* only the fixture fault hook reads it */
++    while (size) {
++        ssize_t put;
++        if (N245_FAULT("write", path)) return -1;
++        put = write(fd, p, size);
++        if (put < 0) { if (errno == EINTR) continue; return -1; }
++        p += put;
++        size -= (size_t)put;
++    }
++    return 0;
++}
++
++/* Write bytes to <final>.n245part, fsync, read back by hash, rename to final. */
++static int n245_publish_bytes(const char *final_path, const void *data, size_t size)
++{
++    char part[N245_PATH_MAX + 16], want[65], got[65];
++    unsigned long long got_size = 0;
++    int fd;
++    if (snprintf(part, sizeof(part), "%s%s", final_path, N245_PART_SUFFIX) >= (int)sizeof(part)) return -1;
++    if (N245_FAULT("create", part)) return -1;
++    fd = open(part, O_WRONLY | O_CREAT | O_TRUNC, 0666);
++    if (fd < 0) return -1;
++    if (n245_write_all(fd, part, data, size) || N245_FSYNC(fd) != 0) { close(fd); return -1; }
++    if (close(fd) != 0) return -1;
++    n245_sha256_of(data, size, want);
++    if (n245_hash_file(part, got, &got_size) || got_size != size || strcmp(want, got)) return -1;
++    if (N245_FAULT("rename", final_path)) return -1;
++    return rename(part, final_path) == 0 ? 0 : -1;
++}
++
++/* ------------------------------------------------------------------ index */
++typedef struct N245File {
++    unsigned long long size;
++    const char *sha;   /* 64 hex */
++    const char *rel;   /* prefix-relative */
++    const char *src;   /* "-" = objects/<sha>; otherwise app-relative runtime path */
++} N245File;
++
++typedef struct N245Index {
++    char *text;
++    const char *end_hash;
++    const char *manifest_end;
++    unsigned long long profile_size;
++    const char *profile_sha;
++    const char **dirs;
++    unsigned dir_count;
++    N245File *files;
++    unsigned file_count;
++} N245Index;
++
++static void n245_index_free(N245Index *ix)
++{
++    free(ix->text);
++    free((void *)ix->dirs);
++    free(ix->files);
++    memset(ix, 0, sizeof(*ix));
++}
++
++static int n245_parse_u64(const char *s, unsigned long long *v)
++{
++    unsigned long long x = 0;
++    size_t n = 0;
++    if (!*s) return -1;
++    for (; *s; s++, n++) {
++        if (*s < '0' || *s > '9' || n >= 19) return -1;
++        x = x * 10u + (unsigned long long)(*s - '0');
++    }
++    *v = x;
++    return 0;
++}
++
++/* A prefix-relative path: no absolute, empty, "." or ".." component, no
++ * control byte or backslash, and none of the importer's reserved names. */
++static int n245_valid_rel(const char *rel)
++{
++    const char *p = rel, *comp = rel;
++    size_t n = strlen(rel);
++    if (n == 0 || n > 512 || rel[0] == '/') return 0;
++    for (;; p++) {
++        if (*p == '/' || *p == 0) {
++            size_t len = (size_t)(p - comp);
++            if (len == 0 || (len == 1 && comp[0] == '.') || (len == 2 && comp[0] == '.' && comp[1] == '.'))
++                return 0;
++            if (*p == 0) break;
++            comp = p + 1;
++            continue;
++        }
++        if ((unsigned char)*p < 0x20 || *p == 0x7f || *p == '\\') return 0;
++    }
++    if (n245_ends_with(rel, N245_PART_SUFFIX)) return 0;
++    if (!strcmp(rel, N245_OWNER_FILE) || !strcmp(rel, N245_MARKER_FILE)) return 0;
++    return 1;
++}
++
++/* Runtime sources are confined to the package's two Wine PE directories. */
++static int n245_valid_runtime_src(const char *src)
++{
++    static const char *const allowed[] = {"win/wine/lib/wine/i386-windows/", "win/wine/lib/wine/x86_64-windows/"};
++    size_t i;
++    for (i = 0; i < 2; i++) {
++        size_t n = strlen(allowed[i]);
++        if (!strncmp(src, allowed[i], n)) {
++            const char *name = src + n;
++            if (!*name || strchr(name, '/') || !n245_valid_rel(name)) return 0;
++            return 1;
++        }
++    }
++    return 0;
++}
++
++static int n245_split_tabs(char *line, char **fields, int max)
++{
++    int n = 0;
++    fields[n++] = line;
++    for (; *line; line++)
++        if (*line == '\t') {
++            if (n == max) return -1;
++            *line = 0;
++            fields[n++] = line + 1;
++        }
++    return n;
++}
++
++static N245Status n245_index_load(const char *path, const char *pinned, N245Index *ix, char *detail, size_t dsize)
++{
++    char *text = NULL, *body_end, *line, *next, digest[65];
++    size_t size = 0;
++    unsigned dir_cap = 0, file_cap = 0, lineno = 0;
++    int have_header = 0, have_slug = 0, have_manifest = 0, have_profile = 0, rc;
++
++    memset(ix, 0, sizeof(*ix));
++    rc = n245_read_all(path, N245_INDEX_LIMIT, &text, &size);
++    if (rc) { snprintf(detail, dsize, "index unreadable rc=%d", rc); return N245_ERR_SEED; }
++    ix->text = text;
++    if (memchr(text, 0, size)) { snprintf(detail, dsize, "index has NUL"); return N245_ERR_SEED; }
++    /* END line: the last line, "END <hex>\n", hashing every byte before it. */
++    if (size < 69 || text[size - 1] != '\n') { snprintf(detail, dsize, "index has no END line"); return N245_ERR_SEED; }
++    body_end = text + size - 69;   /* "END " + 64 hex + "\n" */
++    if (strncmp(body_end, "END ", 4) || (body_end != text && body_end[-1] != '\n')) {
++        snprintf(detail, dsize, "index has no END line");
++        return N245_ERR_SEED;
++    }
++    body_end[68] = 0;
++    if (!n245_is_hex64(body_end + 4)) { snprintf(detail, dsize, "index END malformed"); return N245_ERR_SEED; }
++    n245_sha256_of(text, (size_t)(body_end - text), digest);
++    if (strcmp(digest, body_end + 4)) { snprintf(detail, dsize, "index END mismatch body=%.16s", digest); return N245_ERR_SEED; }
++    if (strcmp(digest, pinned)) {
++        snprintf(detail, dsize, "index END %.16s is not the pinned %.16s", digest, pinned);
++        return N245_ERR_SEED;
++    }
++    ix->end_hash = body_end + 4;
++    *body_end = 0;
++
++    for (line = text; *line; line = next) {
++        char *fields[6];
++        int nf;
++        next = strchr(line, '\n');
++        if (!next) { snprintf(detail, dsize, "index line %u unterminated", lineno + 1); return N245_ERR_SEED; }
++        *next++ = 0;
++        lineno++;
++        if (!have_header) {
++            if (strcmp(line, N245_INDEX_HEADER)) { snprintf(detail, dsize, "index header"); return N245_ERR_SEED; }
++            have_header = 1;
++            continue;
++        }
++        if (!strncmp(line, "slug ", 5)) {
++            if (have_slug || strcmp(line + 5, N245_SLUG)) { snprintf(detail, dsize, "index slug"); return N245_ERR_SEED; }
++            have_slug = 1;
++            continue;
++        }
++        if (!strncmp(line, "manifest_end ", 13)) {
++            if (have_manifest || !n245_is_hex64(line + 13)) { snprintf(detail, dsize, "index manifest_end"); return N245_ERR_SEED; }
++            ix->manifest_end = line + 13;
++            have_manifest = 1;
++            continue;
++        }
++        nf = n245_split_tabs(line, fields, 6);
++        if (nf == 3 && !strcmp(fields[0], "P") && !have_profile && n245_is_hex64(fields[2]) &&
++            !n245_parse_u64(fields[1], &ix->profile_size) && ix->profile_size > 0 &&
++            ix->profile_size < N245_PROFILE_LIMIT) {
++            ix->profile_sha = fields[2];
++            have_profile = 1;
++        } else if (nf == 2 && !strcmp(fields[0], "D") && n245_valid_rel(fields[1])) {
++            if (ix->dir_count == dir_cap) {
++                const char **grown;
++                if (dir_cap >= N245_MAX_ENTRIES) { snprintf(detail, dsize, "index too many dirs"); return N245_ERR_SEED; }
++                dir_cap = dir_cap ? dir_cap * 2 : 256;
++                grown = (const char **)realloc((void *)ix->dirs, dir_cap * sizeof(*grown));
++                if (!grown) { snprintf(detail, dsize, "out of memory"); return N245_ERR_SEED; }
++                ix->dirs = grown;
++            }
++            ix->dirs[ix->dir_count++] = fields[1];
++        } else if (nf == 5 && !strcmp(fields[0], "F") && n245_is_hex64(fields[2]) && n245_valid_rel(fields[3]) &&
++                   (!strcmp(fields[4], "-") || n245_valid_runtime_src(fields[4]))) {
++            N245File *f;
++            unsigned i;
++            if (ix->file_count == file_cap) {
++                N245File *grown;
++                if (file_cap >= N245_MAX_ENTRIES) { snprintf(detail, dsize, "index too many files"); return N245_ERR_SEED; }
++                file_cap = file_cap ? file_cap * 2 : 512;
++                grown = (N245File *)realloc(ix->files, file_cap * sizeof(*grown));
++                if (!grown) { snprintf(detail, dsize, "out of memory"); return N245_ERR_SEED; }
++                ix->files = grown;
++            }
++            for (i = 0; i < ix->file_count; i++)
++                if (!strcmp(ix->files[i].rel, fields[3])) {
++                    snprintf(detail, dsize, "index duplicate file line %u", lineno);
++                    return N245_ERR_SEED;
++                }
++            f = &ix->files[ix->file_count++];
++            if (n245_parse_u64(fields[1], &f->size)) { snprintf(detail, dsize, "index size line %u", lineno); return N245_ERR_SEED; }
++            f->sha = fields[2];
++            f->rel = fields[3];
++            f->src = fields[4];
++        } else {
++            snprintf(detail, dsize, "index line %u malformed", lineno);
++            return N245_ERR_SEED;
++        }
++    }
++    if (!have_header || !have_slug || !have_manifest || !have_profile || ix->file_count == 0) {
++        snprintf(detail, dsize, "index incomplete");
++        return N245_ERR_SEED;
++    }
++    return N245_IMPORTED;   /* "ok" */
++}
++
++/* ------------------------------------------------------------------ profiles */
++static void n245_trim(char **s, char **e)
++{
++    while (*s < *e && (**s == ' ' || **s == '\t' || **s == '\r')) (*s)++;
++    while (*e > *s && ((*e)[-1] == ' ' || (*e)[-1] == '\t' || (*e)[-1] == '\r')) (*e)--;
++}
++
++/* Does an INI profile's [application] section declare id or prefix == slug? */
++static int n245_profile_claims_slug(const char *text, size_t size)
++{
++    const char *p = text, *end = text + size;
++    int in_app = 0;
++    while (p < end) {
++        const char *nl = (const char *)memchr(p, '\n', (size_t)(end - p));
++        char *s = (char *)p, *e = (char *)(nl ? nl : end);
++        p = nl ? nl + 1 : end;
++        n245_trim(&s, &e);
++        if (s == e || *s == '#' || *s == ';') continue;
++        if (*s == '[') {
++            in_app = (size_t)(e - s) == 13 && !memcmp(s, "[application]", 13);
++            continue;
++        }
++        if (in_app) {
++            char *eq = (char *)memchr(s, '=', (size_t)(e - s));
++            char *ks = s, *ke, *vs, *ve = e;
++            if (!eq) continue;
++            ke = eq;
++            vs = eq + 1;
++            n245_trim(&ks, &ke);
++            n245_trim(&vs, &ve);
++            if ((((size_t)(ke - ks) == 2 && !memcmp(ks, "id", 2)) ||
++                 ((size_t)(ke - ks) == 6 && !memcmp(ks, "prefix", 6))) &&
++                (size_t)(ve - vs) == strlen(N245_SLUG) && !memcmp(vs, N245_SLUG, strlen(N245_SLUG)))
++                return 1;
++        }
++    }
++    return 0;
++}
++
++static int n245_profile_file_name(const char *name, size_t len)
++{
++    size_t i;
++    if (len <= 8 || len >= 64 || memcmp(name + len - 8, ".profile", 8)) return 0;
++    for (i = 0; i < len - 8; i++) {
++        char c = name[i];
++        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) return 0;
++    }
++    return 1;
++}
++
++/* profiles.lst limited to the grammar this importer can safely extend: lines
++ * of "<name>.profile", '\n' terminated, at most 31 entries (room for ours).
++ * Returns 1 pure, 0 not pure; *listed set when our name is already there. */
++static int n245_catalog_pure(const char *text, size_t size, int *listed, unsigned *count)
++{
++    const char *p = text, *end = text + size;
++    *listed = 0;
++    *count = 0;
++    if (size && text[size - 1] != '\n') return 0;
++    while (p < end) {
++        const char *nl = (const char *)memchr(p, '\n', (size_t)(end - p));
++        size_t len = (size_t)(nl - p);
++        if (!n245_profile_file_name(p, len)) return 0;
++        if (len == strlen(N245_SLUG ".profile") && !memcmp(p, N245_SLUG ".profile", len)) *listed = 1;
++        if (++*count > 31) return 0;
++        p = nl + 1;
++    }
++    return 1;
++}
++
++/* Refuse when any other profile the launcher would read claims our id/prefix. */
++static N245Status n245_conflicts(const char *profiles_dir, const char *catalog, size_t catalog_size,
++                                 int have_catalog, char *detail, size_t dsize)
++{
++    char path[N245_PATH_MAX];
++    if (have_catalog) {
++        const char *p = catalog, *end = catalog + catalog_size;
++        while (p < end) {
++            const char *nl = (const char *)memchr(p, '\n', (size_t)(end - p));
++            char name[64];
++            size_t len = (size_t)(nl - p);
++            char *text = NULL;
++            size_t size = 0;
++            memcpy(name, p, len);
++            name[len] = 0;
++            p = nl + 1;
++            if (!strcmp(name, N245_SLUG ".profile")) continue;
++            if (!n245_join(path, sizeof(path), profiles_dir, name)) return N245_ERR_ARGS;
++            if (n245_read_all(path, N245_PROFILE_LIMIT, &text, &size) == 0) {
++                int claims = n245_profile_claims_slug(text, size);
++                free(text);
++                if (claims) { snprintf(detail, dsize, "profile %s claims %s", name, N245_SLUG); return N245_REFUSED_CONFLICT; }
++            }
++        }
++        return N245_IMPORTED;
++    }
++    {
++        DIR *dir = opendir(profiles_dir);
++        struct dirent *ent;
++        N245Status st = N245_IMPORTED;
++        if (!dir) return N245_IMPORTED;   /* no profiles directory: nothing can conflict */
++        while ((ent = readdir(dir)) != NULL) {
++            char *text = NULL;
++            size_t size = 0, len = strlen(ent->d_name);
++            if (!n245_profile_file_name(ent->d_name, len) || !strcmp(ent->d_name, N245_SLUG ".profile")) continue;
++            if (!n245_join(path, sizeof(path), profiles_dir, ent->d_name)) { st = N245_ERR_ARGS; break; }
++            if (n245_read_all(path, N245_PROFILE_LIMIT, &text, &size) == 0) {
++                int claims = n245_profile_claims_slug(text, size);
++                free(text);
++                if (claims) {
++                    snprintf(detail, dsize, "profile %s claims %s", ent->d_name, N245_SLUG);
++                    st = N245_REFUSED_CONFLICT;
++                    break;
++                }
++            }
++        }
++        closedir(dir);
++        return st;
++    }
++}
++
++/* ------------------------------------------------------------------ copy */
++/* Copy src to <dst>.n245part while hashing the source, fsync, hash the written
++ * part back, then rename it to dst. ERR_SEED when the source is not the pinned
++ * bytes, ERR_IO on any /data failure. */
++static N245Status n245_copy_verified(const char *src, const char *dst, unsigned long long size, const char *sha,
++                                     unsigned long long *bytes, char *detail, size_t dsize)
++{
++    static unsigned char buf[64 * 1024];
++    char part[N245_PATH_MAX + 16], hex[65];
++    unsigned long long total = 0, back = 0;
++    N245Sha256 s;
++    int in, out;
++
++    if (snprintf(part, sizeof(part), "%s%s", dst, N245_PART_SUFFIX) >= (int)sizeof(part)) return N245_ERR_ARGS;
++    in = open(src, O_RDONLY);
++    if (in < 0) { snprintf(detail, dsize, "seed source missing %.200s", src); return N245_ERR_SEED; }
++    if (N245_FAULT("create", part)) { close(in); snprintf(detail, dsize, "create %.200s", part); return N245_ERR_IO; }
++    out = open(part, O_WRONLY | O_CREAT | O_TRUNC, 0666);
++    if (out < 0) { close(in); snprintf(detail, dsize, "create %.200s errno=%d", part, errno); return N245_ERR_IO; }
++    n245_sha256_init(&s);
++    for (;;) {
++        ssize_t got = read(in, buf, sizeof(buf));
++        if (got < 0) {
++            if (errno == EINTR) continue;
++            close(in); close(out);
++            snprintf(detail, dsize, "read %.200s errno=%d", src, errno);
++            return N245_ERR_SEED;
++        }
++        if (!got) break;
++        total += (unsigned long long)got;
++        if (total > size) break;
++        n245_sha256_update(&s, buf, (size_t)got);
++        if (n245_write_all(out, part, buf, (size_t)got)) {
++            close(in); close(out);
++            snprintf(detail, dsize, "write %.200s errno=%d", part, errno);
++            return N245_ERR_IO;
++        }
++    }
++    close(in);
++    n245_sha256_hex(&s, hex);
++    if (total != size || strcmp(hex, sha)) {
++        close(out);
++        (void)unlink(part);
++        snprintf(detail, dsize, "seed source %.200s is not pinned (size %llu/%llu)", src, total, size);
++        return N245_ERR_SEED;
++    }
++    if (N245_FSYNC(out) != 0) { close(out); snprintf(detail, dsize, "fsync %.200s errno=%d", part, errno); return N245_ERR_IO; }
++    if (close(out) != 0) { snprintf(detail, dsize, "close %.200s errno=%d", part, errno); return N245_ERR_IO; }
++    if (n245_hash_file(part, hex, &back) || back != size || strcmp(hex, sha)) {
++        snprintf(detail, dsize, "read-back mismatch %.200s", part);
++        return N245_ERR_IO;
++    }
++    if (N245_FAULT("rename", dst) || rename(part, dst) != 0) {
++        snprintf(detail, dsize, "rename %.200s errno=%d", dst, errno);
++        return N245_ERR_IO;
++    }
++    *bytes += size;
++    return N245_IMPORTED;
++}
++
++static int n245_file_matches(const char *path, unsigned long long size, const char *sha)
++{
++    char hex[65];
++    unsigned long long got = 0;
++    return n245_hash_file(path, hex, &got) == 0 && got == size && !strcmp(hex, sha);
++}
++
++/* Staging owned by this seed, or empty but for our own owner temp (a crash
++ * between mkdir and the owner rename). */
++static int n245_staging_adoptable(const char *staging, const char *owner_text)
++{
++    char path[N245_PATH_MAX], *text = NULL;
++    size_t size = 0;
++    DIR *dir;
++    struct dirent *ent;
++    int only_ours = 1;
++    if (!n245_join(path, sizeof(path), staging, N245_OWNER_FILE)) return 0;
++    if (n245_read_all(path, 256, &text, &size) == 0) {
++        int same = size == strlen(owner_text) && !memcmp(text, owner_text, size);
++        free(text);
++        return same;
++    }
++    dir = opendir(staging);
++    if (!dir) return 0;
++    while ((ent = readdir(dir)) != NULL)
++        if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") &&
++            strcmp(ent->d_name, N245_OWNER_FILE N245_PART_SUFFIX))
++            only_ours = 0;
++    closedir(dir);
++    return only_ours;
++}
++
++/* ------------------------------------------------------------------ import */
++N245Status n245_seed_import(const char *const *app_roots, size_t root_count, const char *data_root,
++                            const char *pinned_end, N245Result *r)
++{
++    char seed[N245_PATH_MAX], path[N245_PATH_MAX], src[N245_PATH_MAX];
++    char profiles_dir[N245_PATH_MAX], prefixes_dir[N245_PATH_MAX], prefix[N245_PATH_MAX];
++    char staging[N245_PATH_MAX], profile_path[N245_PATH_MAX], catalog_path[N245_PATH_MAX];
++    char owner_text[128], marker_text[128], hex[65];
++    char *profile = NULL, *existing = NULL, *catalog = NULL, *marker = NULL;
++    size_t profile_size = 0, existing_size = 0, catalog_size = 0, marker_size = 0, i;
++    int have_catalog = 0, listed = 0, rc, is_dir = 0;
++    unsigned catalog_count = 0;
++    N245Index ix;
++    N245Status st = N245_ERR_ARGS, publish_status = N245_IMPORTED;
++
++    if (!r) return N245_ERR_ARGS;
++    memset(r, 0, sizeof(*r));
++    memset(&ix, 0, sizeof(ix));
++#define N245_DONE(code) do { st = (code); goto done; } while (0)
++    if (!pinned_end) N245_DONE(N245_DISABLED);
++    if (!app_roots || !data_root || !*data_root || strlen(pinned_end) != 64 || !n245_is_hex64(pinned_end)) {
++        snprintf(r->detail, sizeof(r->detail), "bad arguments");
++        N245_DONE(N245_ERR_ARGS);
++    }
++    seed[0] = 0;
++    for (i = 0; i < root_count; i++) {
++        if (!app_roots[i]) continue;
++        if (!n245_join3(path, sizeof(path), app_roots[i], N245_SEED_DIR, "seed.idx")) continue;
++        if (n245_exists(path, &is_dir) && !is_dir) {
++            n245_join(seed, sizeof(seed), app_roots[i], N245_SEED_DIR);
++            snprintf(r->seed_root, sizeof(r->seed_root), "%s", app_roots[i]);
++            break;
++        }
++    }
++    if (!seed[0]) N245_DONE(N245_NO_SEED);
++    if (!n245_join(path, sizeof(path), seed, "seed.idx")) N245_DONE(N245_ERR_ARGS);
++    st = n245_index_load(path, pinned_end, &ix, r->detail, sizeof(r->detail));
++    if (st != N245_IMPORTED) goto done;
++    r->files_total = ix.file_count;
++    r->dirs_total = ix.dir_count;
++
++    /* The seed profile object: pinned by the index. */
++    if (!n245_join3(path, sizeof(path), seed, "objects", ix.profile_sha)) N245_DONE(N245_ERR_ARGS);
++    rc = n245_read_all(path, N245_PROFILE_LIMIT, &profile, &profile_size);
++    if (rc || profile_size != ix.profile_size) {
++        snprintf(r->detail, sizeof(r->detail), "seed profile object missing or wrong size");
++        N245_DONE(N245_ERR_SEED);
++    }
++    n245_sha256_of(profile, profile_size, hex);
++    if (strcmp(hex, ix.profile_sha)) {
++        snprintf(r->detail, sizeof(r->detail), "seed profile object hash mismatch");
++        N245_DONE(N245_ERR_SEED);
++    }
++
++    if (!n245_join(profiles_dir, sizeof(profiles_dir), data_root, "profiles") ||
++        !n245_join(prefixes_dir, sizeof(prefixes_dir), data_root, "prefixes") ||
++        !n245_join(prefix, sizeof(prefix), prefixes_dir, N245_SLUG) ||
++        !n245_join(staging, sizeof(staging), prefixes_dir, N245_STAGING_NAME) ||
++        !n245_join(profile_path, sizeof(profile_path), profiles_dir, N245_SLUG ".profile") ||
++        !n245_join(catalog_path, sizeof(catalog_path), profiles_dir, "profiles.lst"))
++        N245_DONE(N245_ERR_ARGS);
++    snprintf(owner_text, sizeof(owner_text), "N245-OWNER %s\n", ix.end_hash);
++    snprintf(marker_text, sizeof(marker_text), "N245-COMPLETE %s\n", ix.end_hash);
++
++    /* 1. An existing profile is never replaced. */
++    rc = n245_read_all(profile_path, N245_PROFILE_LIMIT, &existing, &existing_size);
++    if (rc != -1) {
++        if (rc != 0 || existing_size != profile_size || memcmp(existing, profile, profile_size)) {
++            snprintf(r->detail, sizeof(r->detail), "existing %.200s differs from the seed", profile_path);
++            N245_DONE(N245_REFUSED_FOREIGN_PROFILE);
++        }
++        if (!n245_join(path, sizeof(path), prefix, N245_MARKER_FILE)) N245_DONE(N245_ERR_ARGS);
++        if (n245_read_all(path, 256, &marker, &marker_size) == 0 && marker_size == strlen(marker_text) &&
++            !memcmp(marker, marker_text, marker_size))
++            N245_DONE(N245_PRESENT);
++        N245_DONE(N245_PRESENT_EXTERNAL);
++    }
++
++    /* 2. The launcher's view of the other profiles must not already claim Blur. */
++    rc = n245_read_all(catalog_path, 8191, &catalog, &catalog_size);
++    if (rc == 0) {
++        have_catalog = 1;
++        if (!n245_catalog_pure(catalog, catalog_size, &listed, &catalog_count)) {
++            snprintf(r->detail, sizeof(r->detail), "profiles.lst is not a plain name list");
++            N245_DONE(N245_REFUSED_CATALOG);
++        }
++    } else if (rc != -1) {
++        snprintf(r->detail, sizeof(r->detail), "profiles.lst unreadable rc=%d", rc);
++        N245_DONE(N245_REFUSED_CATALOG);
++    }
++    st = n245_conflicts(profiles_dir, catalog, catalog_size, have_catalog, r->detail, sizeof(r->detail));
++    if (st != N245_IMPORTED) goto done;
++
++    /* 3. The prefix: completed earlier (publish only), foreign (refuse), or built now. */
++    if (n245_exists(prefix, &is_dir)) {
++        unsigned k;
++        if (!is_dir || !n245_join(path, sizeof(path), prefix, N245_MARKER_FILE) ||
++            n245_read_all(path, 256, &marker, &marker_size) != 0 || marker_size != strlen(marker_text) ||
++            memcmp(marker, marker_text, marker_size)) {
++            snprintf(r->detail, sizeof(r->detail), "%.200s exists and was not completed by this seed", prefix);
++            N245_DONE(N245_REFUSED_FOREIGN_PREFIX);
++        }
++        /* Wine rewrites the hives on its first run: unchanged hives and link
++         * table mean the prefix was never used, so publishing is safe. */
++        for (k = 0; k < ix.file_count; k++) {
++            const N245File *f = &ix.files[k];
++            int sentinel = (!strchr(f->rel, '/') && n245_ends_with(f->rel, ".reg")) ||
++                           !strcmp(f->rel, "dosdevices/.pw-symlinks");
++            if (!sentinel) continue;
++            if (!n245_join(path, sizeof(path), prefix, f->rel) || !n245_file_matches(path, f->size, f->sha)) {
++                snprintf(r->detail, sizeof(r->detail), "completed prefix changed: %s", f->rel);
++                N245_DONE(N245_REFUSED_PREFIX_MODIFIED);
++            }
++        }
++        publish_status = N245_RESUMED_PUBLISH;
++    } else {
++        unsigned k;
++        if (n245_exists(staging, &is_dir)) {
++            if (!is_dir || !n245_staging_adoptable(staging, owner_text)) {
++                snprintf(r->detail, sizeof(r->detail), "%.200s belongs to another seed", staging);
++                N245_DONE(N245_REFUSED_STAGING);
++            }
++        } else if (n245_mkdir_p(prefixes_dir) || n245_mkdir_one(staging)) {
++            snprintf(r->detail, sizeof(r->detail), "mkdir %.200s errno=%d", staging, errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        if (!n245_join(path, sizeof(path), staging, N245_OWNER_FILE)) N245_DONE(N245_ERR_ARGS);
++        if (!n245_exists(path, NULL)) {
++            if (n245_publish_bytes(path, owner_text, strlen(owner_text))) {
++                snprintf(r->detail, sizeof(r->detail), "owner stamp errno=%d", errno);
++                N245_DONE(N245_ERR_IO);
++            }
++            n245_sync_dir(staging);
++        }
++        for (k = 0; k < ix.dir_count; k++) {
++            if (!n245_join(path, sizeof(path), staging, ix.dirs[k]) || n245_mkdir_p(path)) {
++                snprintf(r->detail, sizeof(r->detail), "mkdir %s errno=%d", ix.dirs[k], errno);
++                N245_DONE(N245_ERR_IO);
++            }
++        }
++        for (k = 0; k < ix.file_count; k++) {
++            const N245File *f = &ix.files[k];
++            if (!n245_join(path, sizeof(path), staging, f->rel)) N245_DONE(N245_ERR_ARGS);
++            if (n245_file_matches(path, f->size, f->sha)) { r->kept++; continue; }
++            if (!strcmp(f->src, "-")) {
++                if (!n245_join3(src, sizeof(src), seed, "objects", f->sha)) N245_DONE(N245_ERR_ARGS);
++            } else if (!n245_join(src, sizeof(src), r->seed_root, f->src)) {
++                N245_DONE(N245_ERR_ARGS);
++            }
++            if (n245_mkdir_parent(path)) {
++                snprintf(r->detail, sizeof(r->detail), "mkdir parent of %s errno=%d", f->rel, errno);
++                N245_DONE(N245_ERR_IO);
++            }
++            st = n245_copy_verified(src, path, f->size, f->sha, &r->bytes_copied, r->detail, sizeof(r->detail));
++            if (st != N245_IMPORTED) goto done;
++            r->copied++;
++        }
++        /* Every file is verified: stamp completion, then make it the prefix. */
++        if (!n245_join(path, sizeof(path), staging, N245_MARKER_FILE) ||
++            n245_publish_bytes(path, marker_text, strlen(marker_text))) {
++            snprintf(r->detail, sizeof(r->detail), "completion stamp errno=%d", errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        n245_sync_dir(staging);
++        if (N245_FAULT("rename", prefix) || rename(staging, prefix) != 0) {
++            snprintf(r->detail, sizeof(r->detail), "rename staging errno=%d", errno);
++            N245_DONE(N245_ERR_IO);
++        }
++        n245_sync_dir(prefixes_dir);
++    }
++
++    /* 4. Catalog first (a listed-but-absent profile is only skipped by the
++     *    launcher, native-wine64_main.c:816-820), profile last. */
++    if (n245_mkdir_p(profiles_dir)) {
++        snprintf(r->detail, sizeof(r->detail), "mkdir %.200s errno=%d", profiles_dir, errno);
++        N245_DONE(N245_ERR_IO);
++    }
++    if (have_catalog && !listed) {
++        size_t name_len = strlen(N245_SLUG ".profile");
++        char *grown = (char *)malloc(catalog_size + name_len + 2);
++        int failed;
++        if (!grown) N245_DONE(N245_ERR_IO);
++        memcpy(grown, catalog, catalog_size);
++        memcpy(grown + catalog_size, N245_SLUG ".profile\n", name_len + 1);
++        failed = n245_publish_bytes(catalog_path, grown, catalog_size + name_len + 1);
++        free(grown);
++        if (failed) {
++            snprintf(r->detail, sizeof(r->detail), "profiles.lst update errno=%d", errno);
++            N245_DONE(N245_ERR_IO);
++        }
++    }
++    if (n245_publish_bytes(profile_path, profile, profile_size)) {
++        snprintf(r->detail, sizeof(r->detail), "profile publish errno=%d", errno);
++        N245_DONE(N245_ERR_IO);
++    }
++    n245_sync_dir(profiles_dir);
++    st = publish_status;
++
++done:
++#undef N245_DONE
++    r->status = st;
++    free(profile);
++    free(existing);
++    free(catalog);
++    free(marker);
++    n245_index_free(&ix);
++    return st;
++}
+diff -ruN a/prospero/native/native245_seed.h b/prospero/native/native245_seed.h
+--- a/prospero/native/native245_seed.h
++++ b/prospero/native/native245_seed.h
+@@ -0,0 +1,113 @@
++/* native245_seed.h -- first-launch seed importer for a self-sufficient
++ * native Wine Blur PKG (task 245).
++ *
++ * The package carries a read-only, hash-pinned seed under
++ *     <app0>/seed245/blur-native/seed.idx
++ *     <app0>/seed245/blur-native/objects/<sha256>
++ * and reuses the package's own Wine PE runtime (<app0>/win/wine/lib/wine/...)
++ * for every prefix module that task243 rebased onto the 01.38 package files,
++ * so no second copy of those modules is staged.
++ *
++ * After the /data grant and before pw_wine_library_load(), the launcher calls
++ * n245_seed_import(). On first launch it builds the writable prefix under
++ * <data_root>/prefixes/.blur-native.n245-staging, verifies every file by
++ * SHA-256 read-back, stamps it complete, renames the directory to
++ * <data_root>/prefixes/blur-native, appends the profile name to an existing
++ * pure-name profiles.lst, and publishes profiles/blur-native.profile LAST
++ * (temp + fsync + rename). Later launches take a cheap fast path (one
++ * <8 KiB profile read and one marker read). Existing profiles, catalogs and
++ * prefixes are never overwritten; a foreign Blur profile or prefix is a
++ * logged refusal that leaves /data untouched and lets the launcher continue.
++ *
++ * Written in the common subset of C11 and C++17 so the same file compiles
++ * into the Orbis title (gnu11) and into the host/Orbis C++ fixtures.
++ */
++#ifndef NATIVE245_SEED_H
++#define NATIVE245_SEED_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define N245_SLUG "blur-native248"
++#define N245_SEED_DIR "seed245/" N245_SLUG
++#define N245_INDEX_HEADER "N245-SEED 1"
++#define N245_STAGING_NAME "." N245_SLUG ".n245-staging"
++#define N245_OWNER_FILE ".n245-owner"
++#define N245_MARKER_FILE ".n245-complete"
++#define N245_PART_SUFFIX ".n245part"
++#define N245_INDEX_LIMIT (4u << 20)
++#define N245_PROFILE_LIMIT 8192u
++#define N245_MAX_ENTRIES 8192u
++#define N245_PATH_MAX 1024u
++
++typedef enum N245Status {
++    N245_IMPORTED = 0,            /* fresh prefix + profile published this launch */
++    N245_PRESENT = 1,             /* our marker + identical profile already there */
++    N245_PRESENT_EXTERNAL = 2,    /* identical profile, prefix not ours (e.g. task244 push): untouched */
++    N245_RESUMED_PUBLISH = 3,     /* prefix completed earlier, profile published now */
++    N245_DISABLED = 10,           /* built without N245_SEED_END: importer compiled out */
++    N245_NO_SEED = 11,            /* package carries no seed: nothing to do */
++    N245_REFUSED_FOREIGN_PROFILE = 20,
++    N245_REFUSED_FOREIGN_PREFIX = 21,
++    N245_REFUSED_CONFLICT = 22,   /* another profile declares id/prefix blur-native */
++    N245_REFUSED_CATALOG = 23,    /* profiles.lst present but not a pure name list */
++    N245_REFUSED_STAGING = 24,    /* staging dir owned by another seed or not ours */
++    N245_REFUSED_PREFIX_MODIFIED = 25, /* completed prefix no longer matches the seed */
++    N245_ERR_SEED = 30,           /* index/object missing, unpinned or hash mismatch */
++    N245_ERR_IO = 31,             /* /data write or read-back failure (resumable) */
++    N245_ERR_ARGS = 32
++} N245Status;
++
++typedef struct N245Result {
++    N245Status status;
++    unsigned files_total;
++    unsigned dirs_total;
++    unsigned copied;              /* files written this run */
++    unsigned kept;                /* files already correct in staging (resume) */
++    unsigned long long bytes_copied;
++    char seed_root[N245_PATH_MAX];
++    char detail[320];
++} N245Result;
++
++/* The pinned seed index END hash compiled into this title, or NULL. */
++const char *n245_seed_pinned_end(void);
++
++/* app_roots: candidate package roots, in the launcher's runtime_roots order.
++ * data_root: the launcher's library_root after the grant (/data/prospero-win).
++ * pinned_end: 64 lowercase hex END hash of seed.idx; NULL means disabled. */
++N245Status n245_seed_import(const char *const *app_roots, size_t root_count,
++                            const char *data_root, const char *pinned_end,
++                            N245Result *result);
++
++const char *n245_status_name(N245Status status);
++
++/* SHA-256 helpers, exported for the fixtures. */
++typedef struct N245Sha256 {
++    uint32_t h[8];
++    uint64_t length;
++    unsigned char block[64];
++    size_t used;
++} N245Sha256;
++void n245_sha256_init(N245Sha256 *s);
++void n245_sha256_update(N245Sha256 *s, const void *data, size_t size);
++void n245_sha256_hex(N245Sha256 *s, char out[65]);
++
++#ifdef N245_TEST_HOOKS
++/* Fixture-only fault injection: called before every mutating /data operation
++ * (mkdir, file create, write, rename, unlink). Returning nonzero makes that
++ * operation fail as if power was lost just before it. */
++extern int (*n245_test_fault)(const char *op, const char *path);
++/* Nonzero skips fsync so a many-run crash sweep fits the worker's time limit;
++ * the fixture keeps real fsync for its fresh-install and resume tests. */
++extern int n245_test_skip_fsync;
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff -ruN a/prospero/native/native279-username-env.c b/prospero/native/native279-username-env.c
+--- a/prospero/native/native279-username-env.c
++++ b/prospero/native/native279-username-env.c
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "native279-username-env.h"
++static int reserved(const char *name)
++{
++    static const char key[]="PW_BLUR_DISPLAY_NAME";
++    if(!name)return 0;
++    for(size_t i=0;;++i) {
++        unsigned char a=(unsigned char)name[i],b=(unsigned char)key[i];
++        if(a>='a' && a<='z')a=(unsigned char)(a-'a'+'A');
++        if(a!=b)return 0;
++        if(!a)return 1;
++    }
++}
++int pw_blur_name_export(PwWineStartEnv *env,uint32_t *count,size_t cap,const char *value)
++{
++    size_t kept=0;
++    if(!env || !count || !value || *count>cap || cap>PW_WINE_START_MAX_ENV)return -1;
++    for(size_t i=0;i<*count;++i) {
++        if(!env[i].name || !env[i].value)return -1;
++        if(!reserved(env[i].name))++kept;
++    }
++    if(kept>=cap)return -1;
++    kept=0;
++    for(size_t i=0;i<*count;++i)if(!reserved(env[i].name))env[kept++]=env[i];
++    env[kept++]=(PwWineStartEnv){"PW_BLUR_DISPLAY_NAME",value};
++    *count=(uint32_t)kept;return 0;
++}
+diff -ruN a/prospero/native/native279-username-env.h b/prospero/native/native279-username-env.h
+--- a/prospero/native/native279-username-env.h
++++ b/prospero/native/native279-username-env.h
+@@ -0,0 +1,10 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#ifndef NATIVE279_USERNAME_ENV_H
++#define NATIVE279_USERNAME_ENV_H
++#include "pw_wine_start.h"
++/* Adds exactly one reserved name entry after removing case-insensitive profile
++ * duplicates. On capacity/argument failure, leaves the array/count unchanged.
++ * value must remain alive until Wine reads its environment (static in main).
++ */
++int pw_blur_name_export(PwWineStartEnv *env,uint32_t *count,size_t capacity,const char *value);
++#endif
+diff -ruN a/prospero/native/native279-username-orbis.c b/prospero/native/native279-username-orbis.c
+--- a/prospero/native/native279-username-orbis.c
++++ b/prospero/native/native279-username-orbis.c
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "native279-username.h"
++#include <orbis/UserService.h>
++
++/* Use the same foreground local user selection as current pad/HID startup.
++ * Existing lifecycle owns service init/terminate. Never pick a random logged-in
++ * user, query an NP identity, or rename the Wine account/home to obtain a label.
++ */
++int pw_blur_name_from_orbis(const char *fallback,size_t extent,PwBlurName *out)
++{
++    static const PwBlurNameOps ops={sceUserServiceGetForegroundUser,sceUserServiceGetUserName};
++    return pw_blur_name_select(&ops,fallback,extent,out);
++}
+diff -ruN a/prospero/native/native279-username.c b/prospero/native/native279-username.c
+--- a/prospero/native/native279-username.c
++++ b/prospero/native/native279-username.c
+@@ -0,0 +1,97 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "native279-username.h"
++#include <string.h>
++
++static void clear(PwBlurName *out) { memset(out,0,sizeof(*out)); out->user_id=-1; }
++
++int pw_blur_name_validate(const char *text, size_t extent, PwBlurName *out)
++{
++    PwBlurName value;
++    size_t length=0, i=0, units=0, scalars=0;
++    int visible=0;
++    if(!out) return 0;
++    clear(out); clear(&value);
++    if(!text || !extent) return 0;
++    while(length<extent && length<PW_BLUR_NAME_UTF8_CAP && text[length]) ++length;
++    if(!length || length>=extent || length>=PW_BLUR_NAME_UTF8_CAP) return 0;
++    while(i<length) {
++        unsigned char first=(unsigned char)text[i++];
++        uint32_t code; unsigned extra; uint32_t minimum;
++        if(first<0x80) {code=first;extra=0;minimum=0;}
++        else if(first>=0xc2 && first<=0xdf) {code=first&31;extra=1;minimum=0x80;}
++        else if(first>=0xe0 && first<=0xef) {code=first&15;extra=2;minimum=0x800;}
++        else if(first>=0xf0 && first<=0xf4) {code=first&7;extra=3;minimum=0x10000;}
++        else return 0;
++        if(i+extra>length) return 0;
++        for(unsigned j=0;j<extra;++j) {
++            unsigned char next=(unsigned char)text[i++];
++            if((next&0xc0)!=0x80) return 0;
++            code=(code<<6)|(next&63);
++        }
++        if(code<minimum || code>0x10ffff || (code>=0xd800 && code<=0xdfff) ||
++           code<0x20 || (code>=0x7f && code<=0x9f) || code==0x2028 || code==0x2029 ||
++           (code&0xffff)==0xfffe || (code&0xffff)==0xffff || ++scalars>PW_BLUR_NAME_SCALARS) return 0;
++        if(!(code==0x20 || code==0xa0 || code==0x1680 || (code>=0x2000 && code<=0x200a) ||
++             code==0x202f || code==0x205f || code==0x3000)) visible=1;
++        if(units+(code<0x10000?1u:2u)>=PW_BLUR_NAME_UTF16_CAP) return 0;
++        if(code<0x10000) value.utf16[units++]=(uint16_t)code;
++        else {code-=0x10000;value.utf16[units++]=(uint16_t)(0xd800+(code>>10));
++              value.utf16[units++]=(uint16_t)(0xdc00+(code&1023));}
++    }
++    if(!visible) return 0;
++    memcpy(value.utf8,text,length+1);
++    value.bytes=length;value.units=units;value.scalars=scalars;*out=value;
++    return 1;
++}
++
++int pw_blur_name_select(const PwBlurNameOps *ops,const char *fallback,size_t extent,PwBlurName *out)
++{
++    char text[PW_BLUR_NAME_UTF8_CAP];
++    PwBlurName selected;
++    int32_t user=-1,foreground_rc=-1,username_rc=-1;
++    if(!out) return PW_BLUR_NAME_NEEDS_ENTRY;
++    clear(out);
++    if(ops && ops->foreground && ops->username) {
++        foreground_rc=ops->foreground(&user);
++        if(foreground_rc!=0) user=-1;
++        if(foreground_rc==0 && user>=0) {
++            /* Do not force a terminator: a service that omitted it must fail,
++             * rather than silently accepting a truncated name. */
++            memset(text,0xa5,sizeof(text));
++            username_rc=ops->username(user,text,sizeof(text));
++            if(username_rc==0 && pw_blur_name_validate(text,sizeof(text),&selected)) {
++                selected.source=PW_BLUR_NAME_LOCAL;goto done;
++            }
++        }
++    }
++    if(pw_blur_name_validate(fallback,extent,&selected)) selected.source=PW_BLUR_NAME_FALLBACK;
++    else clear(&selected);
++done:
++    selected.user_id=user;selected.foreground_rc=foreground_rc;selected.username_rc=username_rc;
++    *out=selected;return out->source;
++}
++
++int pw_blur_name_fallback_decode(const void *bytes,size_t size,PwBlurName *out)
++{
++    char line[PW_BLUR_NAME_UTF8_CAP];
++    if(!out) return 0;
++    clear(out);
++    if(!bytes || !size || size>PW_BLUR_NAME_UTF8_CAP) return 0;
++    const char *input=bytes;
++    if(input[size-1]=='\n') --size;
++    if(!size || size>=sizeof(line) || memchr(input,0,size)) return 0;
++    memcpy(line,input,size);line[size]=0;
++    if(!pw_blur_name_validate(line,size+1,out)) return 0;
++    out->source=PW_BLUR_NAME_FALLBACK;
++    return 1;
++}
++
++int pw_blur_name_fallback_encode(const PwBlurName *name,char *out,size_t cap,size_t *size)
++{
++    PwBlurName checked;
++    if(size) *size=0;
++    if(!name || !out || !size || !pw_blur_name_validate(name->utf8,sizeof(name->utf8),&checked) ||
++       cap<checked.bytes+1) return 0;
++    memcpy(out,checked.utf8,checked.bytes);out[checked.bytes]='\n';*size=checked.bytes+1;
++    return 1;
++}
+diff -ruN a/prospero/native/native279-username.h b/prospero/native/native279-username.h
+--- a/prospero/native/native279-username.h
++++ b/prospero/native/native279-username.h
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#ifndef NATIVE273_USERNAME_H
++#define NATIVE273_USERNAME_H
++#include <stddef.h>
++#include <stdint.h>
++
++enum { PW_BLUR_NAME_UTF8_CAP=65, PW_BLUR_NAME_UTF16_CAP=17, PW_BLUR_NAME_SCALARS=16 };
++enum { PW_BLUR_NAME_NEEDS_ENTRY=0, PW_BLUR_NAME_LOCAL=1, PW_BLUR_NAME_FALLBACK=2 };
++typedef struct PwBlurNameOps {
++    int32_t (*foreground)(int32_t *user);
++    int32_t (*username)(int32_t user, char *out, size_t capacity);
++} PwBlurNameOps;
++typedef struct PwBlurName {
++    char utf8[PW_BLUR_NAME_UTF8_CAP];
++    uint16_t utf16[PW_BLUR_NAME_UTF16_CAP];
++    size_t bytes, units, scalars;
++    int32_t user_id, foreground_rc, username_rc;
++    int source;
++} PwBlurName;
++
++/* Input includes NUL within extent; no truncation/replacement of malformed UTF8.
++ * Returns 1 for a valid nonblank name, 0 otherwise. Clears all output on failure.
++ * This validates the provider encoding, not the game's ANSI/font capabilities.
++ */
++int pw_blur_name_validate(const char *text, size_t extent, PwBlurName *out);
++/* Existing pad/lifecycle owns UserService init/terminate. No service ownership,
++ * account/network operations or prefix/environment changes are performed here.
++ * A persisted editable fallback is considered only if the local name fails.
++ */
++int pw_blur_name_select(const PwBlurNameOps *ops, const char *fallback,
++                        size_t fallback_extent, PwBlurName *out);
++/* Bounded editable UTF8 line codec for a FUTURE launcher-owned per-local-user
++ * file outside the Wine prefix. No disk writes/UI are implemented by this core.
++ */
++int pw_blur_name_fallback_decode(const void *bytes, size_t size, PwBlurName *out);
++int pw_blur_name_fallback_encode(const PwBlurName *name, char *out, size_t capacity, size_t *size);
++int pw_blur_name_from_orbis(const char *fallback, size_t extent, PwBlurName *out);
++#endif
+diff -ruN a/prospero/native/native280-username-ui-file.c b/prospero/native/native280-username-ui-file.c
+--- a/prospero/native/native280-username-ui-file.c
++++ b/prospero/native/native280-username-ui-file.c
+@@ -0,0 +1,120 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "native280-username-ui.h"
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++static int error(PwBlurNameFile *f,int value){f->last_error=value?value:EIO;return -1;}
++static int directory(PwBlurNameFile *f,int create)
++{
++    struct stat st;
++    if(lstat(f->directory,&st)) {
++        if(errno!=ENOENT)return error(f,errno);
++        if(!create)return PW_BLUR_NAME_FILE_MISSING;
++        if(mkdir(f->directory,0700) && errno!=EEXIST)return error(f,errno);
++        if(lstat(f->directory,&st))return error(f,errno);
++    }
++    if(!S_ISDIR(st.st_mode))return error(f,ENOTDIR);
++    return PW_BLUR_NAME_FILE_OK;
++}
++/* Distinguish actual ENOENT from access/IO/type errors. Refuse symlinks/FIFOs,
++ * and bound reads to65 bytes. Existing bytes remain untouched on every failure.
++ */
++static int raw(PwBlurNameFile *f,unsigned char bytes[PW_BLUR_NAME_DISK_MAX],size_t *size)
++{
++    struct stat before,after;int fd,flags=O_RDONLY|O_NONBLOCK;size_t got=0;
++    if(lstat(f->path,&before))return errno==ENOENT?PW_BLUR_NAME_FILE_MISSING:error(f,errno);
++    if(!S_ISREG(before.st_mode) || before.st_size<0 || before.st_size>PW_BLUR_NAME_DISK_MAX)return error(f,EINVAL);
++#ifdef O_NOFOLLOW
++    flags|=O_NOFOLLOW;
++#endif
++    fd=open(f->path,flags);
++    if(fd<0)return error(f,errno);
++    if(fstat(fd,&after) || !S_ISREG(after.st_mode) || before.st_dev!=after.st_dev || before.st_ino!=after.st_ino ||
++       after.st_size!=before.st_size){int saved=errno;close(fd);return error(f,saved?saved:EAGAIN);}
++    while(got<(size_t)before.st_size) {
++        ssize_t n=read(fd,bytes+got,(size_t)before.st_size-got);
++        if(n<0 && errno==EINTR)continue;
++        if(n<=0){int saved=errno;close(fd);return error(f,saved?saved:EIO);}
++        got+=(size_t)n;
++    }
++    unsigned char extra;ssize_t n;
++    do n=read(fd,&extra,1);while(n<0 && errno==EINTR);
++    int rc=close(fd);
++    if(n!=0 || rc)return error(f,errno?errno:EAGAIN);
++    *size=got;return PW_BLUR_NAME_FILE_OK;
++}
++int pw_blur_name_file_init(PwBlurNameFile *f,const char *root,int32_t user)
++{
++    if(!f || !root || root[0]!='/' || user<0)return -1;
++    size_t length=strnlen(root,PW_BLUR_NAME_PATH);
++    if(!length || length>=PW_BLUR_NAME_PATH)return -1;
++    while(length>1 && root[length-1]=='/')--length;
++    memset(f,0,sizeof(*f));f->user=user;
++    int rc=snprintf(f->directory,sizeof(f->directory),"%.*s/player-names",(int)length,root);
++    if(rc<0 || (size_t)rc>=sizeof(f->directory))return -1;
++    rc=snprintf(f->path,sizeof(f->path),"%s/%08x.txt",f->directory,(unsigned)user);
++    return rc>=0 && (size_t)rc<sizeof(f->path)?0:-1;
++}
++int pw_blur_name_file_load(void *context,int32_t user,char *text,size_t capacity)
++{
++    PwBlurNameFile *f=context;PwBlurName parsed;size_t size=0;
++    if(!f || user!=f->user || !text || !capacity)return -1;
++    text[0]=0;f->loaded=0;
++    int rc=directory(f,0);
++    if(rc<0)return rc;
++    if(rc==PW_BLUR_NAME_FILE_MISSING){f->loaded=1;f->before_exists=0;f->before_size=0;return rc;}
++    rc=raw(f,f->before,&size);
++    if(rc<0)return rc;
++    f->loaded=1;f->before_exists=rc==PW_BLUR_NAME_FILE_OK;f->before_size=size;
++    if(rc==PW_BLUR_NAME_FILE_MISSING)return rc;
++    if(!pw_blur_name_fallback_decode(f->before,size,&parsed) || !pw_blur_name_portable(&parsed))return PW_BLUR_NAME_FILE_INVALID;
++    if(parsed.bytes+1>capacity)return error(f,ENOBUFS);
++    memcpy(text,parsed.utf8,parsed.bytes+1);return PW_BLUR_NAME_FILE_OK;
++}
++int pw_blur_name_file_save(void *context,int32_t user,const char *text)
++{
++    PwBlurNameFile *f=context;PwBlurName parsed;char temp[PW_BLUR_NAME_PATH+48],next[PW_BLUR_NAME_UTF8_CAP];
++    unsigned char current[PW_BLUR_NAME_DISK_MAX];size_t size=0,length=0;int fd=-1,created=0;
++    if(!f || !f->loaded || user!=f->user || !pw_blur_name_validate(text,PW_BLUR_NAME_UTF8_CAP,&parsed) ||
++       !pw_blur_name_portable(&parsed) || !pw_blur_name_fallback_encode(&parsed,next,sizeof(next),&length))return -1;
++    if(directory(f,1))return -1;
++    for(unsigned attempt=0;attempt<5;++attempt) {
++        int count=snprintf(temp,sizeof(temp),"%s.tmp-%lu-%u",f->path,(unsigned long)getpid(),++f->serial);
++        if(count<0 || (size_t)count>=sizeof(temp))return error(f,ENAMETOOLONG);
++        fd=open(temp,O_WRONLY|O_CREAT|O_EXCL,0600);
++        if(fd>=0){created=1;break;}
++        if(errno!=EEXIST)return error(f,errno);
++    }
++    if(!created)return error(f,EEXIST);
++    while(size<length) {
++        ssize_t n=write(fd,next+size,length-size);
++        if(n<0 && errno==EINTR)continue;
++        if(n<=0)goto failed;
++        size+=(size_t)n;
++    }
++    if(fsync(fd))goto failed;
++    if(close(fd)){fd=-1;goto failed;}fd=-1;
++    size=0;int rc=raw(f,current,&size);
++    if(rc<0 || (f->before_exists?(rc!=PW_BLUR_NAME_FILE_OK || size!=f->before_size || memcmp(current,f->before,size)):
++                                            rc!=PW_BLUR_NAME_FILE_MISSING)) {
++        errno=EAGAIN;goto failed;
++    }
++    if(rename(temp,f->path))goto failed;
++    created=0; /* Never unlink/restore a published or intervening destination. */
++    int flags=O_RDONLY;
++#ifdef O_DIRECTORY
++    flags|=O_DIRECTORY;
++#endif
++    fd=open(f->directory,flags);
++    if(fd<0 || fsync(fd))goto failed;
++    if(close(fd)){fd=-1;goto failed;}fd=-1;
++    size=0;rc=raw(f,current,&size);
++    if(rc!=PW_BLUR_NAME_FILE_OK || size!=length || memcmp(current,next,length)){errno=EIO;goto failed;}
++    memcpy(f->before,next,length);f->before_size=length;f->before_exists=1;f->last_error=0;return 0;
++failed:
++    {int saved=errno?errno:EIO;if(fd>=0)close(fd);if(created)unlink(temp);return error(f,saved);}
++}
+diff -ruN a/prospero/native/native280-username-ui.c b/prospero/native/native280-username-ui.c
+--- a/prospero/native/native280-username-ui.c
++++ b/prospero/native/native280-username-ui.c
+@@ -0,0 +1,122 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#include "native280-username-ui.h"
++#include <string.h>
++
++static const uint16_t title[]={ 'P','l','a','y','e','r',' ','n','a','m','e',0 };
++static const uint16_t hint[]={ '1','-','1','6',' ','l','e','t','t','e','r','s',',',' ','n','u','m','b','e','r','s',',',' ','.',' ','_',' ','-',0 };
++
++int pw_blur_name_portable(const PwBlurName *name)
++{
++    if(!name || !name->bytes || name->bytes>16 || name->utf8[0]=='.' || name->utf8[name->bytes-1]=='.')return 0;
++    for(size_t i=0;i<name->bytes;++i) {
++        unsigned char c=(unsigned char)name->utf8[i];
++        if(!((c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' || c=='-' || c=='.'))return 0;
++    }
++    return name->utf8[name->bytes]==0;
++}
++static int valid(PwBlurNameSetup *s,const char *text,size_t capacity,PwBlurName *out)
++{
++    return pw_blur_name_validate(text,capacity,out) &&
++        (s->ops.compatible?s->ops.compatible(out):pw_blur_name_portable(out));
++}
++static int finish_dialog(PwBlurNameSetup *s)
++{
++    int rc=0;
++    if(s->owns_dialog) {
++        s->owns_dialog=0;s->osk->showing=0;
++        rc=s->osk->dialog_term();
++    }
++    return rc;
++}
++static int failed(PwBlurNameSetup *s,int error,const char *message)
++{
++    (void)finish_dialog(s);s->state=PW_BLUR_SETUP_ERROR;s->error=error;s->message=message;return s->state;
++}
++static int dialog(PwBlurNameSetup *s,const PwBlurName *prefill)
++{
++    PwOskPs5 *osk=s->osk;
++    if(!osk || !osk->ready || osk->showing || osk->user_id!=s->user || !osk->dialog_init ||
++       !osk->dialog_status || !osk->dialog_result || !osk->dialog_term)
++        return failed(s,-10,"Player name setup is unavailable.");
++    if(!osk->common_tried) {
++        osk->common_tried=1;
++        osk->common_dialog_rc=osk->ops.common_dialog_init?osk->ops.common_dialog_init():-1;
++    }
++    memset(s->text,0,sizeof(s->text));memset(&s->param,0,sizeof(s->param));
++    if(prefill && pw_blur_name_portable(prefill))memcpy(s->text,prefill->utf16,(prefill->units+1)*sizeof(uint16_t));
++    s->param.user_id=s->user;s->param.type=1; /* actual Orbis BASIC_LATIN */
++    s->param.max_text_length=16;s->param.input_text_buffer=s->text;
++    s->param.horizontal_alignment=s->param.vertical_alignment=1;
++    s->param.title=title;s->param.placeholder=hint;
++    int rc=osk->dialog_init(&s->param,NULL);
++    if(rc)return failed(s,rc,"Player name setup could not open.");
++    s->owns_dialog=1;osk->showing=1;s->polls=0;++s->attempts;
++    s->state=PW_BLUR_SETUP_WAIT;return s->state;
++}
++
++int pw_blur_name_setup_begin(PwBlurNameSetup *s,const PwBlurName *local,PwOskPs5 *osk,
++                             const PwBlurNameSetupOps *ops,int force_edit)
++{
++    PwBlurName check,cached;char saved[PW_BLUR_NAME_UTF8_CAP];
++    if(!s || !local || !ops)return PW_BLUR_SETUP_ERROR;
++    memset(s,0,sizeof(*s));s->ops=*ops;s->osk=osk;s->user=local->user_id;
++    s->message="Choose your player name.";
++    if(s->user<0 || local->foreground_rc!=0)return failed(s,-2,"No local user is available for player name setup.");
++    if(!force_edit && local->source==PW_BLUR_NAME_LOCAL && valid(s,local->utf8,sizeof(local->utf8),&check)) {
++        s->selected=*local;s->source=PW_BLUR_SETUP_LOCAL;s->state=PW_BLUR_SETUP_READY;return s->state;
++    }
++    if(!ops->load || !ops->save)return failed(s,-3,"Player name settings are unavailable.");
++    memset(saved,0,sizeof(saved));
++    int rc=ops->load(ops->context,s->user,saved,sizeof(saved));
++    if(rc<0)return failed(s,rc,"Player name settings could not be read.");
++    if(rc==PW_BLUR_NAME_FILE_OK && valid(s,saved,sizeof(saved),&cached)) {
++        if(!force_edit) {
++            s->selected=cached;s->selected.user_id=s->user;s->selected.source=PW_BLUR_NAME_FALLBACK;
++            s->source=PW_BLUR_SETUP_SAVED;s->state=PW_BLUR_SETUP_READY;return s->state;
++        }
++        return dialog(s,&cached);
++    }
++    if(rc!=PW_BLUR_NAME_FILE_OK && rc!=PW_BLUR_NAME_FILE_MISSING && rc!=PW_BLUR_NAME_FILE_INVALID)
++        return failed(s,-4,"Player name settings have an unknown state.");
++    return dialog(s,NULL);
++}
++
++int pw_blur_name_setup_poll(PwBlurNameSetup *s)
++{
++    if(!s)return PW_BLUR_SETUP_ERROR;
++    if(s->state!=PW_BLUR_SETUP_WAIT)return s->state;
++    int status=s->osk->dialog_status();++s->polls;
++    if(status==PW_OSK_PS5_RUNNING)return s->state;
++    if(status==PW_OSK_PS5_NONE && s->polls<PW_OSK_PS5_GRACE_POLLS)return s->state;
++    if(status!=PW_OSK_PS5_FINISHED)return failed(s,-11,"Player name setup stopped unexpectedly.");
++    PwOskPs5Result result;memset(&result,0,sizeof(result));
++    int rc=s->osk->dialog_result(&result),term=finish_dialog(s);
++    if(rc || term)return failed(s,rc?rc:term,"Player name setup could not finish.");
++    if(result.outcome==PW_OSK_PS5_CANCELLED || result.outcome==PW_OSK_PS5_ABORTED) {
++        s->state=PW_BLUR_SETUP_CANCELLED;s->message="Player name setup was cancelled.";return s->state;
++    }
++    if(result.outcome!=PW_OSK_PS5_OK)return failed(s,-12,"Player name setup returned an unknown result.");
++    char text[17];size_t length=0;
++    while(length<17 && s->text[length]) {
++        if(s->text[length]>127)break;
++        text[length]=(char)s->text[length];++length;
++    }
++    PwBlurName accepted;
++    if(length>=17 || s->text[length] || !length)goto invalid;
++    text[length]=0;
++    if(!valid(s,text,length+1,&accepted))goto invalid;
++    if(s->ops.save(s->ops.context,s->user,accepted.utf8))
++        return failed(s,-13,"Player name could not be saved.");
++    accepted.user_id=s->user;accepted.source=PW_BLUR_NAME_FALLBACK;s->selected=accepted;
++    s->source=PW_BLUR_SETUP_ENTERED;s->state=PW_BLUR_SETUP_READY;s->message="Player name saved.";return s->state;
++invalid:
++    s->message="Use 1-16 letters, numbers, dot, underscore or hyphen.";
++    if(s->attempts>=3)return failed(s,-14,"Player name setup needs a valid name. Restart to try again.");
++    return dialog(s,NULL);
++}
++void pw_blur_name_setup_close(PwBlurNameSetup *s)
++{
++    if(!s)return;
++    (void)finish_dialog(s);
++    if(s->state==PW_BLUR_SETUP_WAIT){s->state=PW_BLUR_SETUP_CANCELLED;s->message="Player name setup was cancelled.";}
++}
+diff -ruN a/prospero/native/native280-username-ui.h b/prospero/native/native280-username-ui.h
+--- a/prospero/native/native280-username-ui.h
++++ b/prospero/native/native280-username-ui.h
+@@ -0,0 +1,56 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++#ifndef NATIVE280_USERNAME_UI_H
++#define NATIVE280_USERNAME_UI_H
++#include "native279-username.h"
++#include "pw_osk_ps5.h"
++
++enum { PW_BLUR_SETUP_ERROR=-1,PW_BLUR_SETUP_WAIT=0,PW_BLUR_SETUP_READY=1,PW_BLUR_SETUP_CANCELLED=2 };
++enum { PW_BLUR_NAME_FILE_OK=0,PW_BLUR_NAME_FILE_MISSING=1,PW_BLUR_NAME_FILE_INVALID=2 };
++enum { PW_BLUR_SETUP_LOCAL=1,PW_BLUR_SETUP_SAVED=2,PW_BLUR_SETUP_ENTERED=3 };
++typedef struct PwBlurNameSetupOps {
++    void *context;
++    /* Load: OK/MISSING/INVALID, negative on access/IO/unknown state. Save must
++     * atomically publish and reread exactly before returning success. */
++    int (*load)(void *context,int32_t user,char *text,size_t capacity);
++    int (*save)(void *context,int32_t user,const char *text);
++    /* Optional qualified policy; NULL uses conservative portable ASCII names.
++     * Returning nonzero promises exact original-game callback compatibility. */
++    int (*compatible)(const PwBlurName *name);
++} PwBlurNameSetupOps;
++typedef struct PwBlurNameSetup {
++    PwBlurNameSetupOps ops;
++    PwOskPs5 *osk;
++    PwBlurName selected;
++    PwOskPs5Param param;
++    uint16_t text[PW_OSK_PS5_TEXT];
++    int state,source,error,owns_dialog;
++    int32_t user;
++    unsigned polls,attempts;
++    const char *message;
++} PwBlurNameSetup;
++
++/* Native policy accepted by coordinator: A-Z/a-z, digits, dot, underscore,
++ * hyphen; 1..16 bytes; no leading/trailing dot. UID, never typed text, keys IO. */
++int pw_blur_name_portable(const PwBlurName *name);
++/* Existing UserService/OSK lifecycle owns initialization and preloaded modules.
++ * No SDK/account/network or save/prefix mutation is done by this state machine.
++ * force_edit permits editing an existing fallback; normal call passes0. */
++int pw_blur_name_setup_begin(PwBlurNameSetup *setup,const PwBlurName *local,
++                             PwOskPs5 *osk,const PwBlurNameSetupOps *ops,int force_edit);
++int pw_blur_name_setup_poll(PwBlurNameSetup *setup);
++void pw_blur_name_setup_close(PwBlurNameSetup *setup);
++
++enum { PW_BLUR_NAME_PATH=768,PW_BLUR_NAME_DISK_MAX=65 };
++typedef struct PwBlurNameFile {
++    char directory[PW_BLUR_NAME_PATH],path[PW_BLUR_NAME_PATH];
++    unsigned char before[PW_BLUR_NAME_DISK_MAX];
++    size_t before_size;
++    int32_t user;
++    int loaded,before_exists,last_error;
++    unsigned serial;
++} PwBlurNameFile;
++/* Derived namespace library_root/player-names/<8hex-local-uid>.txt only. */
++int pw_blur_name_file_init(PwBlurNameFile *file,const char *library_root,int32_t user);
++int pw_blur_name_file_load(void *context,int32_t user,char *text,size_t capacity);
++int pw_blur_name_file_save(void *context,int32_t user,const char *text);
++#endif
+diff -ruN a/prospero/native/pw_remote_control.h b/prospero/native/pw_remote_control.h
+--- a/prospero/native/pw_remote_control.h
++++ b/prospero/native/pw_remote_control.h
+@@ -0,0 +1,125 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Bounded file transport for the existing title input/lifecycle, not shell control. */
++#ifndef PW_REMOTE_CONTROL_H
++#define PW_REMOTE_CONTROL_H
++#include <ctype.h>
++#include <errno.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++enum { PW_RC_NONE, PW_RC_LAUNCH, PW_RC_PAD, PW_RC_RELEASE, PW_RC_CLOSE };
++typedef struct PwRemoteControl {
++    char root[512], session[64], profile[64], target[64];
++    const char *phase, *result;
++    uint32_t seq;
++    uint64_t poll_at, status_at, expires;
++    int enabled, action;
++    unsigned buttons, lt, rt;
++    int lx, ly, rx, ry;
++} PwRemoteControl;
++
++static void pw_rc_release(PwRemoteControl *c) {
++    c->expires=0; c->buttons=c->lt=c->rt=0; c->lx=c->ly=c->rx=c->ry=0;
++}
++static int pw_rc_id(const char *s) {
++    size_t n=strlen(s); if(!n || n>63) return 0;
++    for(size_t i=0;i<n;i++) if(!isalnum((unsigned char)s[i]) && s[i]!='_' && s[i]!='-') return 0;
++    return 1;
++}
++static int pw_rc_number(const char *s, long lo, long hi, long *v) {
++    char *end; if(!*s || *s=='+' || (lo>=0 && *s=='-')) return 0;
++    errno=0; long n=strtol(s,&end,0);
++    if(errno || *end || n<lo || n>hi) return 0;
++    *v=n; return 1;
++}
++static int pw_rc_path(PwRemoteControl *c,char *out,size_t cap,const char *leaf) {
++    int n=snprintf(out,cap,"%s/control/%s",c->root,leaf); return n>0 && (size_t)n<cap;
++}
++static int pw_rc_publish(PwRemoteControl *c,const char *leaf,int ack) {
++    char path[640],tmp[650];
++    if(!pw_rc_path(c,path,sizeof(path),leaf)) return 0;
++    snprintf(tmp,sizeof(tmp),"%s.tmp",path);
++    FILE *f=fopen(tmp,"wb"); if(!f) return 0;
++    int ok;
++    if(ack) ok=fprintf(f,"{\"version\":1,\"session\":\"%s\",\"seq\":%u,\"result\":\"%s\"}\n",c->session,c->seq,c->result)>=0;
++    else ok=fprintf(f,"{\"version\":1,\"session\":\"%s\",\"phase\":\"%s\",\"profile\":\"%s\",\"last_seq\":%u,\"result\":\"%s\",\"active\":%s,\"held\":%s}\n",c->session,c->phase,c->profile,c->seq,c->result,c->enabled?"true":"false",c->expires?"true":"false")>=0;
++    if(fclose(f)) ok=0;
++    return ok && rename(tmp,path)==0;
++}
++static int pw_rc_ack(PwRemoteControl *c,const char *result) {
++    c->result=result;
++    int ok=pw_rc_publish(c,"ack.json",1);
++    (void)pw_rc_publish(c,"status.json",0);
++    return ok;
++}
++static void pw_rc_init(PwRemoteControl *c,const char *root,const char *phase,const char *profile,uint64_t now) {
++    memset(c,0,sizeof(*c)); c->phase=phase; c->result="ready";
++    if(strlen(root)>=sizeof(c->root)) return;
++    strcpy(c->root,root);
++    if(profile && pw_rc_id(profile)) strcpy(c->profile,profile);
++    snprintf(c->session,sizeof(c->session),"%lu-%llu",(unsigned long)getpid(),(unsigned long long)now);
++}
++/* Mutate no state on malformed or stale input. Host parser rejects extra tokens. */
++static int pw_rc_parse(PwRemoteControl *c,char *line,uint64_t now) {
++    char *tok[13],*save=NULL,*s=strtok_r(line," \t\r\n",&save); unsigned n=0;
++    while(s && n<13) {tok[n++]=s;s=strtok_r(NULL," \t\r\n",&save);}
++    long seq,v[8];
++    if(s || n<4 || strcmp(tok[0],"PWCTRL1") || strcmp(tok[1],c->session) ||
++       !pw_rc_number(tok[2],1,4294967295L,&seq) || (uint32_t)seq<=c->seq) return 0;
++    int action=PW_RC_NONE;
++    if(n==5 && !strcmp(tok[3],"LAUNCH") && pw_rc_id(tok[4])) action=PW_RC_LAUNCH;
++    else if(n==4 && !strcmp(tok[3],"RELEASE")) action=PW_RC_RELEASE;
++    else if(n==4 && !strcmp(tok[3],"CLOSE")) action=PW_RC_CLOSE;
++    else if(n==12 && !strcmp(tok[3],"PAD")) {
++        for(unsigned i=0;i<8;i++) {
++            long lo=i>=3 && i<=6?-32768: i==7?1:0;
++            long hi=i==0?65535:i<3?255:i==7?5000:32767;
++            if(!pw_rc_number(tok[4+i],lo,hi,&v[i])) return 0;
++        }
++        if(v[0] & ~0xf3ffL) return 0; /* reject Guide and reserved bit */
++        action=PW_RC_PAD;
++    }
++    if(!action) return 0;
++    c->seq=(uint32_t)seq; c->action=action;
++    if(action==PW_RC_LAUNCH) strcpy(c->target,tok[4]);
++    if(action==PW_RC_PAD) {
++        c->buttons=(unsigned)v[0];c->lt=(unsigned)v[1];c->rt=(unsigned)v[2];
++        c->lx=(int)v[3];c->ly=(int)v[4];c->rx=(int)v[5];c->ry=(int)v[6];
++        c->expires=now+(uint64_t)v[7]*1000000u;
++    }
++    if(action==PW_RC_RELEASE || action==PW_RC_CLOSE) pw_rc_release(c);
++    return action;
++}
++static int pw_rc_poll(PwRemoteControl *c,uint64_t now) {
++    if(c->expires && now>=c->expires) pw_rc_release(c);
++    if(now<c->poll_at || !c->root[0]) return 0;
++    c->poll_at=now+200000000u;
++    char path[640],text[514];
++    snprintf(path,sizeof(path),"%s/pw_remote_control",c->root);
++    FILE *f=fopen(path,"rb"); size_t got=f?fread(text,1,4,f):0; if(f) fclose(f);
++    int enabled=(got==1 && text[0]=='1') || (got==2 && text[0]=='1' && text[1]=='\n');
++    if(!enabled) { if(c->enabled) {c->enabled=0;pw_rc_release(c);(void)pw_rc_publish(c,"status.json",0);} return 0; }
++    if(!c->enabled) {
++        c->enabled=1; pw_rc_path(c,path,sizeof(path),"");
++        if(mkdir(path,0700) && errno!=EEXIST) {c->enabled=0;return 0;}
++        /* Commands queued during a disabled interval must never replay. */
++        snprintf(c->session,sizeof(c->session),"%lu-%llu",(unsigned long)getpid(),(unsigned long long)now);
++        c->seq=0;c->result="ready";c->status_at=0;
++    }
++    if(now>=c->status_at) {(void)pw_rc_publish(c,"status.json",0);c->status_at=now+1000000000u;}
++    pw_rc_path(c,path,sizeof(path),"command.txt");f=fopen(path,"rb");if(!f) return 0;
++    got=fread(text,1,513,f);int bad=ferror(f);fclose(f);
++    if(bad || !got || got>512 || memchr(text,0,got)) return 0;
++    text[got]=0;
++    int action=pw_rc_parse(c,text,now);
++    if(action && ((action==PW_RC_LAUNCH && strcmp(c->phase,"launcher")) ||
++                  ((action==PW_RC_PAD || action==PW_RC_CLOSE) && strcmp(c->phase,"game")))) {
++        pw_rc_release(c);(void)pw_rc_ack(c,"wrong_phase");return 0;
++    }
++    return action;
++}
++#endif
+diff -ruN a/prospero/native/wine64_main.c b/prospero/native/wine64_main.c
+--- a/prospero/native/wine64_main.c
++++ b/prospero/native/wine64_main.c
+@@ -44,23 +44,31 @@
+ #include "pw_videoout_ps5.h"
+ #include "pw_wine_library.h"
+ #include "pw_wine_prefix.h"
++#include "native245_seed.h"
+ #include "../src/pw_present.h"
+ #include "../src/pw_spinner.h"
+ #include "../src/pw_tsc_calibrate.h"
+ #include "pw_wine_display.h"
+ #include "../include/prospero_win.h"
+ 
++#include <fcntl.h>
++#include <errno.h>
+ #include <pthread.h>
+ #include <signal.h>
+ #include <stdio.h>
+ #include <sys/mman.h>
+ #include <sys/resource.h>
+ #include <sys/stat.h>
++#include <orbis/_types/kernel.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/socket.h>
+ #include <time.h>
+ #include <unistd.h>
++#include "pw_remote_control.h"
++#include "native279-username.h"
++#include "native279-username-env.h"
++#include "native280-username-ui.h"
+ 
+ #ifndef PW_TITLE_ID
+ #define PW_TITLE_ID "PPSA99995"
+@@ -96,7 +104,48 @@
+ #define PW_FIXED_PROFILE ""
+ #endif
+ static const char fixed_profile[] = PW_FIXED_PROFILE;
+-static int single_program(void) { return fixed_profile[0] != '\0'; }
++static int direct_maintenance; /* fixed once after the data grant */
++/* N276_POLICY_BEGIN */
++static const char direct_profile_text[] =
++    "[application]\n"
++    "id = blur-direct\n"
++    "name = Blur\n"
++    "executable = Z:\\data\\Pc\\Blur\\Blur.exe\n"
++    "working_directory = Z:\\data\\Pc\\Blur\n"
++    "dll_overrides = d3d9=n\n"
++    "prefix = blur-native248\n"
++    "runtime = wine-wow64\n"
++    "architecture = pe32\n"
++    "graphics = dxvk\n"
++    "[display]\n"
++    "desktop = 1920x1080\n"
++    "scaling = fit\n"
++    "[input]\n"
++    "mode = xinput\n"
++    "options = escape\n"
++    "[runtime]\n"
++    "cpu = native\n"
++    "[debug]\n"
++    "winedebug = +tid,err+all,+loaddll\n"
++    "env = PW_NATIVE_ALERT_UMTX=1\n";
++static PwGameProfile direct_profile;
++static PwWineApp direct_app;
++static int direct_single(int maintenance, int fixed) { return !maintenance || fixed; }
++static int direct_init(PwWineLaunch *out)
++{
++    char *args[] = { "profile=blur-direct", NULL };
++    if (pw_game_profile_parse((const uint8_t *)direct_profile_text,
++                              sizeof(direct_profile_text) - 1, &direct_profile) != PW_OK)
++        return -1;
++    direct_app = (PwWineApp){ direct_profile.app.id, direct_profile.app.name,
++                              "", direct_profile.app.executable };
++    if (pw_wine_launch_parse(1, args, &direct_app, 1, out) != 0 ||
++        out->mode != PW_WINE_LAUNCH_GAME || out->app != &direct_app)
++        return -1;
++    return 0;
++}
++/* N276_POLICY_END */
++static int single_program(void) { return direct_single(direct_maintenance, fixed_profile[0] != '\0'); }
+ 
+ /* Where the title's Wine runtime can be seen: /app0 inside the sandbox;
+  * once /data is granted the process sees the real root, where /app0 does
+@@ -294,8 +343,9 @@
+ 
+ 
+ int sceSystemServiceLoadExec(const char *path, char *const argv[]);
+-int sceSystemServiceGetAppIdOfRunningBigApp(void);
+-int sceSystemServiceKillApp(int app_id, int how, int reason, int core_dump);
++int32_t sceSystemServiceGetAppIdOfBigApp(void);
++int32_t sceKernelGetAppInfo(pid_t pid, OrbisAppInfo *info);
++int32_t sceSystemServiceKillApp(uint32_t app_id, int32_t opt, int32_t method, int32_t reason);
+ int32_t sceKernelLoadStartModule(const char *path, size_t argc, const void *argv,
+                                  uint32_t flags, const void *option, int *result);
+ int sceKernelGetModuleInfo(int32_t handle, void *info);
+@@ -704,13 +754,18 @@
+  * itself. Does not return. */
+ static void leave_to_home(const char *reason)
+ {
+-    int app_id, rc = -1;
++    OrbisAppInfo own;
++    int32_t app_id, info_rc, rc = -1;
+ 
+     display_quiesce(reason);
+-    app_id = sceSystemServiceGetAppIdOfRunningBigApp();
+-    PS5LOG_LOG("PW_WINE64 leave close app_id=0x%x", (unsigned)app_id);
++    memset(&own, 0, sizeof(own));
++    info_rc = sceKernelGetAppInfo(getpid(), &own);
++    app_id = sceSystemServiceGetAppIdOfBigApp();
++    PS5LOG_LOG("PW_WINE64 leave close own_rc=0x%x own_app=0x%x big_app=0x%x",
++               (unsigned)info_rc, (unsigned)own.AppId, (unsigned)app_id);
+     pw_diagnostics_close(reason);
+-    if (app_id > 0 && (rc = sceSystemServiceKillApp(app_id, -1, 0, 0)) == 0)
++    if (info_rc == 0 && app_id > 0 && own.AppId == app_id &&
++        (rc = sceSystemServiceKillApp((uint32_t)app_id, -1, 0, 0)) == 0)
+         for (unsigned i = 0; i < PW_WINE64_LEAVE_WAIT_S * 10u; i++) usleep(100000);
+     pw_diagnostics_resume();
+     PS5LOG_LOG("PW_WINE64 leave close rc=0x%08x: ending the process", (unsigned)rc);
+@@ -809,6 +864,18 @@
+                mount.helper_errno, mount.data_after, mount.elevated_after, mount.waited_ms,
+                mount.settled_ms, status == 0 ? library_root : "unavailable");
+     if (status != 0) return -1;
++    {   /* Task 245: import the package's hash-pinned Blur seed into the library
++         * root before profiles are read (native245_seed.h). Every outcome is
++         * logged; none stops the launcher, and a refusal leaves /data untouched. */
++        N245Result seed;
++        uint64_t seed_started = now_ns();
++        N245Status seed_status = n245_seed_import(runtime_roots, sizeof(runtime_roots) / sizeof(runtime_roots[0]),
++                                                  library_root, n245_seed_pinned_end(), &seed);
++        PS5LOG_LOG("PW_WINE64 seed245 status=%s files=%u copied=%u kept=%u bytes=%llu ms=%llu "
++                   "seed_root=%s detail=%s", n245_status_name(seed_status), seed.files_total, seed.copied,
++                   seed.kept, seed.bytes_copied, (unsigned long long)((now_ns() - seed_started) / 1000000u),
++                   seed.seed_root[0] ? seed.seed_root : "-", seed.detail[0] ? seed.detail : "-");
++    }
+     status = pw_wine_library_load(&library, library_root);
+     catalog_count = 0;
+     for (uint32_t i = 0; i < library.count; i++) {
+@@ -868,6 +935,8 @@
+ /* Shown until a game is chosen; Wine is not loaded. Does not return. */
+ static void run_launcher(void)
+ {
++    PwRemoteControl remote;
++    pw_rc_init(&remote, library_root, "launcher", "", now_ns());
+     static PwVideoOutPs5 video;
+     static PwPadPs5 pad;
+     PwPadPs5Ops pad_ops;
+@@ -876,7 +945,7 @@
+     uint8_t *frame = mmap(NULL, frame_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+     PwLauncherScene scene = { items, 0, PW_LAUNCHER_RENDER_NONE,
+         launch.refused ? "THAT GAME IS NOT IN THE LIBRARY" :
+-        !catalog_count ? "ADD PROFILES TO /DATA/PROSPERO-WIN/PROFILES" :
++        !catalog_count ? "ADD PROFILES TO THE PROFILES FOLDER" :
+         launch.cycle ? "WELCOME BACK" : "CHOOSE A GAME" };
+     static PwHidPs5 hid;
+     int video_status = pw_videoout_ps5_open(&video), pad_status = pw_pad_ps5_platform_ops(&pad_ops);
+@@ -913,6 +982,17 @@
+     scene.status = log_status;
+     for (uint64_t tick = 1; chosen < 0; tick++) {
+         pw_diagnostics_tick(now_ns());
++        int remote_action = pw_rc_poll(&remote, now_ns());
++        if (remote_action == PW_RC_LAUNCH) {
++            int found = -1;
++            for (size_t i = 0; i < catalog_count; i++)
++                if (!strcmp(catalog[i].id, remote.target)) { found = (int)i; break; }
++            if (pw_rc_ack(&remote, found >= 0 ? "accepted" : "unknown_profile") && found >= 0) {
++                chosen = found;
++                PS5LOG_LOG("PW_CONTROL session=%s seq=%u launch=%s accepted=1", remote.session, remote.seq, remote.target);
++                break;
++            }
++        } else if (remote_action == PW_RC_RELEASE) (void)pw_rc_ack(&remote, "accepted");
+         if (tick % PW_WINE64_TICKS_PER_S == 0 && !report_help) {
+             pw_diagnostics_status(log_status, sizeof(log_status)); dirty = 1;
+         }
+@@ -977,6 +1057,319 @@
+     _exit(1);
+ }
+ 
++/* N276_FILECHECK_BEGIN */
++/* Read a bounded DOS and PE32 header from an open regular file. The fixed
++ * offset ceiling avoids unbounded seeks on damaged files. No game bytes are
++ * modified and no full-file hashing occurs during startup. */
++static int direct_read_exact(int fd, uint8_t *dst, size_t size)
++{
++    while (size) {
++        ssize_t got = read(fd, dst, size);
++        if (got < 0 && errno == EINTR) continue;
++        if (got <= 0) return 0;
++        dst += (size_t)got;
++        size -= (size_t)got;
++    }
++    return 1;
++}
++static int direct_game_file_ok(const char *path)
++{
++    enum { DOS_SIZE = 64, PE_SIZE = 26, MAX_PE_OFFSET = 1024 * 1024 };
++    uint8_t dos[DOS_SIZE], pe[PE_SIZE];
++    struct stat st;
++    uint32_t off;
++    int ok = 0, fd;
++    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return 0;
++    fd = open(path, O_RDONLY | O_NONBLOCK);
++    if (fd < 0) return 0;
++    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < DOS_SIZE + PE_SIZE ||
++        !direct_read_exact(fd, dos, sizeof(dos)) || dos[0] != 'M' || dos[1] != 'Z') goto done;
++    off = (uint32_t)dos[60] | (uint32_t)dos[61] << 8 |
++          (uint32_t)dos[62] << 16 | (uint32_t)dos[63] << 24;
++    if (off < DOS_SIZE || off > MAX_PE_OFFSET || (uint64_t)off + PE_SIZE > (uint64_t)st.st_size ||
++        lseek(fd, (off_t)off, SEEK_SET) != (off_t)off || !direct_read_exact(fd, pe, sizeof(pe))) goto done;
++    /* PE signature, i386 machine, PE32 optional-header magic. */
++    ok = pe[0] == 'P' && pe[1] == 'E' && pe[2] == 0 && pe[3] == 0 &&
++         pe[4] == 0x4c && pe[5] == 0x01 && ((uint32_t)pe[20] | (uint32_t)pe[21] << 8) >= 2 && pe[24] == 0x0b && pe[25] == 0x01 &&
++         (uint64_t)off + 24u + ((uint32_t)pe[20] | (uint32_t)pe[21] << 8) <= (uint64_t)st.st_size;
++done:
++    close(fd);
++    return ok;
++}
++/* N276_FILECHECK_END */
++
++/* The project's own files in the game folder, shipped in the package. Any Blur
++ * version may be used, but these must match the package exactly. */
++static const char *const direct_required[] = {
++    "d3d9.dll", "d3d9_blur_dxvk.dll", "d3d9.c988.dll", "dxvk.conf"
++};
++static int direct_file_equal(const char *a, const char *b)
++{
++    static uint8_t left[65536], right[65536];
++    struct stat sa, sb;
++    int same = 0, fa = open(a, O_RDONLY), fb = open(b, O_RDONLY);
++    if (fa >= 0 && fb >= 0 && fstat(fa, &sa) == 0 && fstat(fb, &sb) == 0 && sa.st_size == sb.st_size) {
++        same = 1;
++        for (off_t remain = sa.st_size; remain > 0 && same;) {
++            size_t n = remain < (off_t)sizeof(left) ? (size_t)remain : sizeof(left);
++            if (!direct_read_exact(fa, left, n) || !direct_read_exact(fb, right, n) || memcmp(left, right, n)) same = 0;
++            remain -= (off_t)n;
++        }
++    }
++    if (fa >= 0) close(fa);
++    if (fb >= 0) close(fb);
++    return same;
++}
++static int direct_file_copy(const char *src, const char *dst)
++{
++    static uint8_t chunk[65536];
++    char temp[280];
++    int ok = 0, in = open(src, O_RDONLY), out;
++    snprintf(temp, sizeof(temp), "%s.install", dst);
++    out = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
++    if (in >= 0 && out >= 0) {
++        ssize_t got;
++        ok = 1;
++        while (ok && (got = read(in, chunk, sizeof(chunk))) > 0)
++            for (ssize_t done = 0; ok && done < got;) {
++                ssize_t put = write(out, chunk + done, (size_t)(got - done));
++                if (put <= 0) ok = 0; else done += put;
++            }
++        if (got < 0) ok = 0;
++    }
++    if (in >= 0) close(in);
++    if (out >= 0) close(out);
++    if (ok && rename(temp, dst) != 0) ok = 0;
++    if (!ok) unlink(temp);
++    return ok;
++}
++/* The one supported Blur.exe. */
++static const uint8_t direct_blur_sha256[32] = { 0xdb,0xa0,0x26,0x4b,0x78,0x08,0xa5,0xe3,0x8d,0x99,0xc8,0xc1,0x62,0xec,0xd7,0x1a,0xb0,0x6a,0x48,0xfb,0xc4,0x24,0xfe,0xb1,0xb9,0xa3,0xbc,0x1b,0xff,0x2f,0xbf,0x3f };
++
++static uint32_t sha_rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
++static void sha_block(uint32_t h[8], const uint8_t *p)
++{
++    static const uint32_t k[64] = {
++        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
++        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
++        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
++        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
++        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
++        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
++        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
++        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
++    };
++    uint32_t w[64], v[8];
++    for (int i = 0; i < 16; i++)
++        w[i] = (uint32_t)p[i*4] << 24 | (uint32_t)p[i*4+1] << 16 | (uint32_t)p[i*4+2] << 8 | p[i*4+3];
++    for (int i = 16; i < 64; i++) {
++        uint32_t s0 = sha_rotr(w[i-15],7) ^ sha_rotr(w[i-15],18) ^ (w[i-15] >> 3);
++        uint32_t s1 = sha_rotr(w[i-2],17) ^ sha_rotr(w[i-2],19) ^ (w[i-2] >> 10);
++        w[i] = w[i-16] + s0 + w[i-7] + s1;
++    }
++    memcpy(v, h, sizeof(v));
++    for (int i = 0; i < 64; i++) {
++        uint32_t t1 = v[7] + (sha_rotr(v[4],6) ^ sha_rotr(v[4],11) ^ sha_rotr(v[4],25)) +
++                      ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
++        uint32_t t2 = (sha_rotr(v[0],2) ^ sha_rotr(v[0],13) ^ sha_rotr(v[0],22)) +
++                      ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
++        v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = v[3] + t1;
++        v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = t1 + t2;
++    }
++    for (int i = 0; i < 8; i++) h[i] += v[i];
++}
++/* SHA-256 of a whole file; returns 1 on success. */
++static int direct_file_sha256(const char *path, uint8_t out[32])
++{
++    static uint8_t chunk[65536];
++    uint32_t h[8] = { 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19 };
++    uint8_t tail[128];
++    uint64_t total = 0;
++    size_t used = 0;
++    ssize_t got;
++    int fd = open(path, O_RDONLY);
++    if (fd < 0) return 0;
++    while ((got = read(fd, chunk + used, sizeof(chunk) - used)) > 0) {
++        size_t have = used + (size_t)got, off = 0;
++        total += (uint64_t)got;
++        for (; have - off >= 64; off += 64) sha_block(h, chunk + off);
++        used = have - off;
++        memmove(chunk, chunk + off, used);
++    }
++    close(fd);
++    if (got < 0) return 0;
++    memset(tail, 0, sizeof(tail));
++    memcpy(tail, chunk, used);
++    tail[used] = 0x80;
++    size_t pad = used < 56 ? 64 : 128;
++    for (int i = 0; i < 8; i++) tail[pad - 1 - (size_t)i] = (uint8_t)((total * 8) >> (8 * i));
++    sha_block(h, tail);
++    if (pad == 128) sha_block(h, tail + 64);
++    for (int i = 0; i < 8; i++) {
++        out[i*4] = (uint8_t)(h[i] >> 24); out[i*4+1] = (uint8_t)(h[i] >> 16);
++        out[i*4+2] = (uint8_t)(h[i] >> 8); out[i*4+3] = (uint8_t)h[i];
++    }
++    return 1;
++}
++enum { DIRECT_GAME_MISSING = 0, DIRECT_GAME_OK = 1, DIRECT_INSTALL_FAILED = 2, DIRECT_GAME_WRONG = 3 };
++/* Hashes again only when the file changes, so the page's polling stays cheap
++ * and a copy still in progress settles by itself. */
++static int direct_game_state(void)
++{
++    static off_t last_size = -1;
++    static time_t last_time;
++    static int last_state = DIRECT_GAME_MISSING;
++    static const char path[] = "/data/Pc/Blur/Blur.exe";
++    struct stat st;
++    uint8_t digest[32];
++    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) { last_size = -1; return DIRECT_GAME_MISSING; }
++    if (st.st_size == last_size && st.st_mtime == last_time) return last_state;
++    last_size = st.st_size;
++    last_time = st.st_mtime;
++    last_state = direct_game_file_ok(path) && direct_file_sha256(path, digest) &&
++                 !memcmp(digest, direct_blur_sha256, sizeof(digest)) ? DIRECT_GAME_OK : DIRECT_GAME_WRONG;
++    PS5LOG_LOG("PW_WINE64 Blur game check size=%lld state=%d", (long long)st.st_size, last_state);
++    return last_state;
++}
++
++/* Returns 1 when every required file matches the package afterwards. */
++static int direct_install_required(void)
++{
++    char root[200] = "", src[280], dst[280];
++    int failed = 0;
++    for (size_t i = 0; i < sizeof(runtime_roots) / sizeof(runtime_roots[0]) && !root[0]; i++) {
++        snprintf(src, sizeof(src), "%s/blur-files/%s", runtime_roots[i], direct_required[0]);
++        if (access(src, R_OK) == 0) snprintf(root, sizeof(root), "%s/blur-files", runtime_roots[i]);
++    }
++    /* The app sets up its own folders, before the user has copied anything. */
++    (void)mkdir("/data/Pc", 0777);
++    (void)mkdir("/data/Pc/Blur", 0777);
++    if (!root[0]) {
++        PS5LOG_LOG("PW_WINE64 Blur files status=package-folder-missing");
++        return 0;
++    }
++    for (size_t i = 0; i < sizeof(direct_required) / sizeof(direct_required[0]); i++) {
++        snprintf(src, sizeof(src), "%s/%s", root, direct_required[i]);
++        snprintf(dst, sizeof(dst), "/data/Pc/Blur/%s", direct_required[i]);
++        int copied = 0;
++        if (!direct_file_equal(src, dst)) {
++            copied = direct_file_copy(src, dst);
++            if (!copied || !direct_file_equal(src, dst)) {
++                PS5LOG_LOG("PW_WINE64 Blur files status=failed file=%s errno=%d", direct_required[i], errno);
++                failed = 1;
++                continue;
++            }
++        }
++        PS5LOG_LOG("PW_WINE64 Blur files file=%s %s", direct_required[i], copied ? "installed" : "ok");
++    }
++    return !failed;
++}
++
++/* Normal-mode start page: a found game waits for Cross, a missing one explains
++ * where to put it. The file is checked again while the page is up, so a copy
++ * finished over FTP is picked up without restarting. */
++int pw_blur_start_render(const PwPresentTarget *target, int state);
++static void direct_start_screen(void)
++{
++    static PwVideoOutPs5 video;
++    static PwPadPs5 pad;
++    PwPadPs5Ops pad_ops;
++    const size_t size = (size_t)PW_LAUNCHER_RENDER_WIDTH * PW_LAUNCHER_RENDER_HEIGHT * 4u;
++    uint8_t *frame = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++    int video_status = pw_videoout_ps5_open(&video);
++    int pad_status = pw_pad_ps5_platform_ops(&pad_ops);
++    int found = -1, ready = 0, ops_ok = pad_status == PW_OK;
++    const int installed = direct_install_required();
++
++    if (ops_ok)
++        pad_status = pw_pad_ps5_open(&pad, &pad_ops, pad_open_map,
++                                     sizeof(pad_open_map) / sizeof(pad_open_map[0]));
++    if (video_status != PW_OK || frame == MAP_FAILED) {
++        PS5LOG_LOG("PW_WINE64 Blur start page video=%s frame=%d", pw_result_name(video_status), frame != MAP_FAILED);
++        if (pad_status == PW_OK) (void)pw_pad_ps5_close(&pad);
++        if (installed && direct_game_state() == DIRECT_GAME_OK) return;
++        for (;;) usleep(250000);
++    }
++    const PwPresentTarget target = { frame, PW_LAUNCHER_RENDER_WIDTH, PW_LAUNCHER_RENDER_HEIGHT,
++                                     PW_LAUNCHER_RENDER_WIDTH * 4u, size };
++    const PwPresentView view = { frame, target.width, target.height, target.stride, (uint32_t)size };
++    for (uint64_t tick = 0;; tick++) {
++        if (tick % (2 * PW_WINE64_TICKS_PER_S) == 0) {
++            int now_found = installed ? direct_game_state() : DIRECT_INSTALL_FAILED;
++            if (now_found != found) {
++                found = now_found;
++                ready = found == DIRECT_GAME_OK;
++                int rc = pw_blur_start_render(&target, found);
++                if (rc == PW_OK) rc = pw_videoout_ps5_present(&video, &view);
++                PS5LOG_LOG("PW_WINE64 Blur start page found=%d ready=%d present=%s", found, ready, pw_result_name(rc));
++            }
++            /* No controller signed in yet: keep trying while the page is up. */
++            if (pad_status != PW_OK && ops_ok && tick)
++                pad_status = pw_pad_ps5_open(&pad, &pad_ops, pad_open_map,
++                                             sizeof(pad_open_map) / sizeof(pad_open_map[0]));
++        }
++        if (ready && pad_status == PW_OK && pw_pad_ps5_read(&pad) == PW_OK &&
++            (pad.core.pressed_edges & PAD_CROSS))
++            break;
++        usleep(PW_WINE64_TICK_US);
++    }
++    PS5LOG_LOG("PW_WINE64 Blur start page chose=start");
++    (void)pw_pad_ps5_close(&pad);
++    (void)pw_videoout_ps5_close(&video);
++    munmap(frame, size);
++}
++
++/* Runs only before Wine's environment/thread. Existing PS4 IME handles and
++ * local UserService selection are reused; no account/home/save is renamed. */
++int pw_blur_name_setup_render(const PwPresentTarget *target,const char *message,int stopped);
++static void direct_player_name_setup(PwBlurName *name,PwOskPs5 *osk,PwVideoOutPs5 *video,
++                                      int video_status,int force_edit)
++{
++    PwBlurNameSetup setup;PwBlurNameFile file;
++    PwBlurNameSetupOps ops={&file,pw_blur_name_file_load,pw_blur_name_file_save,NULL};
++    /* First-entry IME is a native setup dialog, independent of Wine's guest
++     * keyboard sink. Module preload already happened before the /data grant. */
++    if((force_edit || !pw_blur_name_portable(name)) && name->user_id>=0 && !osk->ready)
++        (void)pw_osk_ps5_open(osk,pw_osk_ps5_system_ops(osk_log),name->user_id);
++    if(pw_blur_name_file_init(&file,library_root,name->user_id)){ops.load=NULL;ops.save=NULL;}
++    int state=pw_blur_name_setup_begin(&setup,name,osk,&ops,force_edit);
++    if(state==PW_BLUR_SETUP_READY){*name=setup.selected;return;}
++    const size_t bytes=(size_t)PW_LAUNCHER_RENDER_WIDTH*PW_LAUNCHER_RENDER_HEIGHT*4u;
++    uint8_t *frame=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
++    if(video_status!=PW_OK || frame==MAP_FAILED) {
++        pw_blur_name_setup_close(&setup);
++        PS5LOG_LOG("PW_WINE64 display_name setup=failed reason=display-unavailable");
++        leave_to_home("blur-name-setup-display-unavailable");
++    }
++    const PwPresentTarget target={frame,PW_LAUNCHER_RENDER_WIDTH,PW_LAUNCHER_RENDER_HEIGHT,
++                                  PW_LAUNCHER_RENDER_WIDTH*4u,bytes};
++    const PwPresentView view={frame,target.width,target.height,target.stride,(uint32_t)bytes};
++    for(;;) {
++        if(state==PW_BLUR_SETUP_READY) {
++            *name=setup.selected;pw_blur_name_setup_close(&setup);munmap(frame,bytes);
++            PS5LOG_LOG("PW_WINE64 display_name setup=ready source=%s bytes=%u",
++                       setup.source==PW_BLUR_SETUP_ENTERED?"entered":"saved-fallback",(unsigned)name->bytes);
++            return;
++        }
++        int stopped=state!=PW_BLUR_SETUP_WAIT;
++        int rc=pw_blur_name_setup_render(&target,setup.message,stopped);
++        if(rc==PW_OK)rc=pw_videoout_ps5_present(video,&view);
++        (void)sceGnmSubmitDone();
++        if(rc!=PW_OK) {
++            pw_blur_name_setup_close(&setup);
++            PS5LOG_LOG("PW_WINE64 display_name setup=failed reason=present status=%d",rc);
++            leave_to_home("blur-name-setup-present-failed");
++        }
++        if(stopped) {
++            PS5LOG_LOG("PW_WINE64 display_name setup=%s error=%d no_game_launch=1",
++                       state==PW_BLUR_SETUP_CANCELLED?"cancelled":"failed",setup.error);
++            for(;;)usleep(250000); /* explicit page; no restart/relaunch loop */
++        }
++        usleep(PW_WINE64_TICK_US);
++        state=pw_blur_name_setup_poll(&setup);
++    }
++}
++
+ /* ---- early fault report ------------------------------------------------ */
+ 
+ /* Until Wine installs its own handlers, a fault inside ntdll would end the
+@@ -1037,6 +1430,35 @@
+     return NULL;
+ }
+ 
++/* Blur: the PS4's seventh core, asked for by `env = PW_SEVENTH_CORE=1` in the
++ * game profile. A thread inherits its creator's affinity, so setting it here,
++ * before Wine starts, covers every later thread. */
++extern void *scePthreadSelf(void);
++extern int scePthreadSetaffinity(void *thread, uint64_t mask);
++extern int scePthreadGetaffinity(void *thread, uint64_t *mask);
++static void pw_blur_seventh_core(int wanted)
++{
++    void *self = scePthreadSelf();
++    uint64_t had = 0, got = 0;
++    int get_rc = scePthreadGetaffinity(self, &had);
++    if (!wanted) {
++        PS5LOG_LOG("PW_WINE64 cores mask=%#llx seventh=off get_rc=%d", (unsigned long long)had, get_rc);
++        return;
++    }
++    int probe_rc = scePthreadSetaffinity(self, 0x40);
++    int check_rc = scePthreadGetaffinity(self, &got);
++    if (probe_rc == 0 && check_rc == 0 && got == 0x40) {
++        int set_rc = scePthreadSetaffinity(self, 0x7f);
++        scePthreadGetaffinity(self, &got);
++        PS5LOG_LOG("PW_WINE64 cores seventh=granted mask=%#llx was=%#llx set_rc=%d", (unsigned long long)got,
++                   (unsigned long long)had, set_rc);
++    } else {
++        int restore_rc = scePthreadSetaffinity(self, had);
++        PS5LOG_LOG("PW_WINE64 cores seventh=refused probe_rc=%#x check_rc=%#x got=%#llx restored=%#llx restore_rc=%d",
++                   probe_rc, check_rc, (unsigned long long)got, (unsigned long long)had, restore_rc);
++    }
++}
++
+ static int start_thread(void (*entry)(void *), void *arg, size_t stack_bytes)
+ {
+     pthread_attr_t attr;
+@@ -1059,12 +1481,13 @@
+ {
+     static char prefix[PW_WINE_LIBRARY_PATH + PW_APP_ID_CAPACITY], desktop[24], view[8] = "window";
+     static char radv_cache[PW_WINE_LIBRARY_PATH + 16];
++    static PwBlurName blur_display_name; /* lifetime extends through Wine startup */
+     enum { WINE64_FIXED_ENV_COUNT = 7,
+            /* desktop, overrides, SDL_JOYSTICK_RAWINPUT and the PS4
+             * mprotect marker, plus the three launcher A/B switches and the
+             * PS4 NetCtl snapshot. (The synced 3 + ... undercounted the PS4
+             * mprotect marker by one.) */
+-           WINE64_PROFILE_ENV_CAPACITY = 8 + PW_GAME_GRAPHICS_ENV_MAX + PW_GAME_RUNTIME_ENV_MAX + PW_GAME_CPU_ENV_MAX +
++           WINE64_PROFILE_ENV_CAPACITY = 9 + PW_GAME_GRAPHICS_ENV_MAX + PW_GAME_RUNTIME_ENV_MAX + PW_GAME_CPU_ENV_MAX +
+                                          PW_GAME_CLOCK_ENV_MAX + PW_GAME_DEBUG_ENV_MAX };
+     static PwWineStartEnv extra[WINE64_FIXED_ENV_COUNT + WINE64_PROFILE_ENV_CAPACITY] = {
+         { "WINEDEBUG", PW_WINE64_DEBUG },
+@@ -1148,6 +1571,8 @@
+     PwPadPs5Ops pad_ops;
+     int status, video_status = PW_ERR_STATE, pad_status = PW_ERR_STATE, hid_status = PW_ERR_STATE;
+     uint64_t close_requested = 0, combo_ticks = 0, started = now_ns();
++    PwRemoteControl remote;
++    int remote_fed = 0;
+ 
+     ps5log_config_defaults(&log_config);
+     if (ps5log_load_config(ps5log_default_conf_paths, ps5log_default_conf_path_count,
+@@ -1158,9 +1583,18 @@
+     if (open_library() != 0) {
+         PS5LOG_LOG("PW_WINE64 startup blocked reason=data-helper-incomplete");
+         ps5log_close("data-helper-incomplete");
+-        return 1;
++        /* A returned main parks in the relocated entry. Close this title
++         * through the existing guarded Home path instead of hanging. */
++        leave_to_home("data-helper-incomplete");
++    }
++    /* Maintenance is sampled once per process, after the data grant. */
++    direct_maintenance = access("/data/prospero-win/blur-maintenance", F_OK) == 0;
++    if (!direct_maintenance) {
++        direct_start_screen();
++        if (direct_init(&launch) != 0) leave_to_home("blur-direct-profile-invalid");
++    } else {
++        (void)pw_wine_launch_parse(argc, argv, catalog, catalog_count, &launch);
+     }
+-    (void)pw_wine_launch_parse(argc, argv, catalog, catalog_count, &launch);
+     (void)pw_diagnostics_open(library_root, PW_BUILD_ID,
+                               launch.app ? launch.app->id : "launcher", launch.cycle);
+     /* The package's own identity (title, APP_VER, commit), defined by
+@@ -1182,7 +1616,9 @@
+     /* The game's profile: its prefix, desktop, scaling and input. A bare
+      * path= runs in the default prefix with nothing bound. */
+     pw_game_input_init(&game_input);
+-    game = launch.app ? pw_wine_library_find(&library, launch.app->id) : NULL;
++    game = !direct_maintenance ? &direct_profile :
++           (launch.app ? pw_wine_library_find(&library, launch.app->id) : NULL);
++    pw_rc_init(&remote, library_root, "game", game ? game->app.id : "", started);
+     if (game && strcmp(game->app.prefix, "default"))
+         snprintf(prefix, sizeof(prefix), "%s/prefixes/%s", library_root, game->app.prefix);
+     else
+@@ -1329,6 +1765,12 @@
+                 strcat(names, debug_env[i].name);
+             }
+             if (debug_count) PS5LOG_LOG("PW_WINE64 debug_env=%s", names);
++            {
++                int seventh = 0;
++                for (size_t i = 0; i < debug_count; i++)
++                    if (!strcmp(debug_env[i].name, "PW_SEVENTH_CORE") && !strcmp(debug_env[i].value, "1")) seventh = 1;
++                pw_blur_seventh_core(seventh);
++            }
+         }
+         /* refresh and opengl_thread set the PS5 OpenGL SDK's output rate and
+          * glthread; Zink, which replaced it, has neither, so they are ignored. */
+@@ -1527,7 +1969,24 @@
+             PS5LOG_LOG("PW_WINE64 cwd=%s host=%s status=%d", game->app.working_directory,
+                        mapped == 0 ? host_dir : "-", cwd_status);
+         }
+-        status = pw_wine_start_environment(&start, &config, &ops);
++        /* N280_NAME_BEGIN: every game phase obtains a compatible local or
++         * persisted/entered per-user name, or stays on an explicit setup page.
++         * Never start Wine with a silent empty game-mode override. */
++        memset(&blur_display_name, 0, sizeof(blur_display_name));
++        blur_display_name.user_id=-1;
++        /* This is already the game phase. Maintenance only holds the
++         * pre-launch chooser; every launched profile uses the same name. */
++        (void)pw_blur_name_from_orbis(NULL,0,&blur_display_name);
++        direct_player_name_setup(&blur_display_name,&osk_ps5,&video,video_status,0);
++        if (pw_blur_name_export(extra,&config.extra_env_count,
++                                sizeof(extra)/sizeof(extra[0]),blur_display_name.utf8))
++            status=PW_ERR_PRECONDITION;
++        else
++            status=pw_wine_start_environment(&start,&config,&ops);
++        PS5LOG_LOG("PW_WINE64 display_name source=%s bytes=%u default_only=1",
++                   blur_display_name.source==PW_BLUR_NAME_LOCAL?"local-ps4":"saved-or-entered",
++                   (unsigned)blur_display_name.bytes);
++        /* N280_NAME_END */
+         PS5LOG_LOG("PW_WINE64 environment status=%d", status);
+     }
+ #ifdef PW_RELOCATABLE_WINE
+@@ -1687,6 +2146,16 @@
+         /* XInput controller 0: the DualSense, and in a script build the
+          * macro's controller added to it, every frame, so a scripted press
+          * stays down until its release. */
++        int remote_action = pw_rc_poll(&remote, now);
++        int remote_blocked = menu_open || (pad_read && pad.intercepted) || osk_ps5.showing;
++        if (remote_action == PW_RC_PAD && (!set_pad || remote_blocked)) {
++            pw_rc_release(&remote);
++            (void)pw_rc_ack(&remote, !set_pad ? "no_xinput_sink" : "intercepted");
++        } else if (remote_action == PW_RC_CLOSE && !post_input) {
++            (void)pw_rc_ack(&remote, "no_input_sink");
++            remote_action = PW_RC_NONE;
++        }
++        if (remote_blocked) pw_rc_release(&remote);
+         if (set_pad) {
+             PwWinePad state;
+             int connected = pw_wine_game_pad(pad_read ? seen : NULL, &state), scripted = 0;
+@@ -1694,7 +2163,33 @@
+             scripted = script_input.pad_events != 0;
+             connected = pw_wine_script_pad(&state, connected, &script_pad, scripted);
+ #endif
+-            if (pad_read || scripted) set_pad(connected ? &state : NULL);
++            int remote_held = remote.expires != 0;
++            if (remote_held) {
++                if (!connected) memset(&state, 0, sizeof(state));
++                state.connected = 1; connected = 1;
++                state.buttons |= (uint16_t)remote.buttons;
++                if (remote.lt > state.left_trigger) state.left_trigger = (uint8_t)remote.lt;
++                if (remote.rt > state.right_trigger) state.right_trigger = (uint8_t)remote.rt;
++                if (remote.lx || remote.ly) { state.thumb_lx=(int16_t)remote.lx; state.thumb_ly=(int16_t)remote.ly; }
++                if (remote.rx || remote.ry) { state.thumb_rx=(int16_t)remote.rx; state.thumb_ry=(int16_t)remote.ry; }
++            }
++            if (pad_read || scripted || remote_held || remote_fed) set_pad(connected ? &state : NULL);
++            remote_fed = remote_held;
++        }
++        if ((remote_action == PW_RC_PAD && set_pad && !remote_blocked) || remote_action == PW_RC_RELEASE) {
++            /* This receipt follows the void native sink call, not merely parsing. */
++            if (!pw_rc_ack(&remote, "accepted")) {
++                pw_rc_release(&remote);
++                if (set_pad) {
++                    PwWinePad physical;
++                    int connected = pw_wine_game_pad(pad_read ? seen : NULL, &physical);
++#if PW_WINE64_SCRIPT
++                    connected = pw_wine_script_pad(&physical, connected, &script_pad, script_input.pad_events != 0);
++#endif
++                    set_pad(connected ? &physical : NULL);
++                }
++                remote_fed = 0;
++            } else PS5LOG_LOG("PW_CONTROL session=%s seq=%u action=%d submitted=1", remote.session, remote.seq, remote_action);
+         }
+         /* XInput controllers 1..3: the other signed-in users' DualSenses,
+          * each with its own rumble, once the game has asked xinput for one
+@@ -1952,8 +2447,10 @@
+                        pad.touch_left ? "left" : "right");
+         combo_ticks = pad_status == PW_OK && (pad.core.previous_buttons & PAD_CLOSE) == PAD_CLOSE ?
+                       combo_ticks + 1 : 0;
++        if (remote_action == PW_RC_CLOSE && close_requested)
++            (void)pw_rc_ack(&remote, "already_closing");
+         if (!close_requested &&
+-            (combo_ticks >= PW_WINE64_CLOSE_HOLD_S * PW_WINE64_TICKS_PER_S ||
++            (remote_action == PW_RC_CLOSE || combo_ticks >= PW_WINE64_CLOSE_HOLD_S * PW_WINE64_TICKS_PER_S ||
+              (PW_WINE64_SECONDS && now - started >= (uint64_t)PW_WINE64_SECONDS * 1000000000u))) {
+             static const PwWineInput alt_f4[] = {
+                 { PW_WINE_INPUT_KEY, 0x12, 0, 0, 1 }, { PW_WINE_INPUT_KEY, 0x73, 0, 0, 1 },
+@@ -1963,9 +2460,12 @@
+             if (rumble && pad_status == PW_OK) (void)pw_pad_ps5_vibrate(&pad, 0, 0);
+             for (uint32_t i = 0; set_pad_at && i < PW_PAD_PLAYERS; i++)
+                 if (players.slot[i].opened) (void)pw_pad_ps5_vibrate(&players.slot[i], 0, 0);
++            int close_post_failed = 0;
+             for (size_t i = 0; post_input && i < sizeof(alt_f4) / sizeof(alt_f4[0]); i++)
+-                (void)post_input(&alt_f4[i]);
+-            PS5LOG_LOG("PW_WINE64 close requested by=%s", combo_ticks ? "combo" : "deadline");
++                close_post_failed |= post_input(&alt_f4[i]) != 0;
++            if (remote_action == PW_RC_CLOSE)
++                (void)pw_rc_ack(&remote, close_post_failed ? "close_post_failed" : "accepted");
++            PS5LOG_LOG("PW_WINE64 close requested by=%s", remote_action == PW_RC_CLOSE ? "remote" : combo_ticks ? "combo" : "deadline");
+         }
+         if (close_requested && now - close_requested >= (uint64_t)PW_WINE64_CLOSE_WAIT_S * 1000000000u) {
+             PS5LOG_LOG("PW_WINE64 close timeout: leaving the game");
+diff -ruN a/prospero/src/pw_game_profile.c b/prospero/src/pw_game_profile.c
+--- a/prospero/src/pw_game_profile.c
++++ b/prospero/src/pw_game_profile.c
+@@ -364,6 +364,9 @@
+     }
+     for (size_t i = 0; i < sizeof(families) / sizeof(families[0]); i++)
+         family |= starts(value, name_length, families[i]);
++    /* Exact Blur movie controls only; do not admit arbitrary DSOUND settings. */
++    family |= same(value, name_length, "DSOUND_PS4_MOVIE_OBS") ||
++              same(value, name_length, "DSOUND_PS4_MOVIE_CLEAR_PLAYED");
+     if (!family || starts(value, name_length, "PW_QPC_TSC_")) return PW_ERR_UNSUPPORTED;
+     for (size_t i = 0; i < sizeof(title_set) / sizeof(title_set[0]); i++)
+         if (same(value, name_length, title_set[i])) return PW_ERR_UNSUPPORTED;
+diff -ruN a/prospero/src/pw_launcher_render.c b/prospero/src/pw_launcher_render.c
+--- a/prospero/src/pw_launcher_render.c
++++ b/prospero/src/pw_launcher_render.c
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+ #include "pw_launcher_render.h"
+ #include <string.h>
++#include "pw_blur_logo.h"
+ 
+ enum { W=PW_LAUNCHER_RENDER_WIDTH,H=PW_LAUNCHER_RENDER_HEIGHT,
+        BAR=96,TASKBAR_Y=996,TILE_W=520,TILE_H=240,TILE_GAP=40,
+@@ -220,7 +221,7 @@
+     ramp(c,0,0,W,BAR,rgb(0x3a,0x86,0xf2),rgb(0x0a,0x44,0xc0));
+     fill(c,0,0,W,3,rgb(0x8c,0xbc,0xff));
+     fill(c,0,BAR-3,W,3,rgb(0x06,0x2e,0x8a));
+-    text(c,48,27,"Prospero Win",6,rgb(0xff,0xff,0xff),W);
++    text(c,48,27,"Blur",6,rgb(0xff,0xff,0xff),W);
+     text(c,W-48-text_width("Library",5),31,"Library",5,rgb(0xdc,0xea,0xff),W);
+ }
+ static void tile(const Canvas *c,int32_t x,int32_t y,const PwLauncherItem *item,int selected)
+@@ -303,6 +304,101 @@
+     return PW_OK;
+ }
+ 
++/* Case-preserving glyphs for the direct-launch missing-game page. */
++static const Glyph direct_lower[] = {
++ {'a',{0,0,14,1,15,17,15}}, {'b',{16,16,22,25,17,17,30}},
++ {'c',{0,0,14,16,16,17,14}}, {'d',{1,1,13,19,17,17,15}},
++ {'e',{0,0,14,17,31,16,14}}, {'f',{6,9,8,28,8,8,8}},
++ {'g',{0,15,17,17,15,1,14}}, {'h',{16,16,22,25,17,17,17}},
++ {'i',{4,0,12,4,4,4,14}}, {'j',{2,0,6,2,2,18,12}},
++ {'k',{16,16,18,20,24,20,18}}, {'l',{12,4,4,4,4,4,14}},
++ {'m',{0,0,26,21,21,21,21}}, {'n',{0,0,22,25,17,17,17}},
++ {'o',{0,0,14,17,17,17,14}}, {'p',{0,0,30,17,30,16,16}},
++ {'q',{0,0,13,19,15,1,1}}, {'r',{0,0,22,25,16,16,16}},
++ {'s',{0,0,15,16,14,1,30}}, {'t',{8,8,28,8,8,9,6}},
++ {'u',{0,0,17,17,17,19,13}}, {'v',{0,0,17,17,17,10,4}},
++ {'w',{0,0,17,17,21,21,10}}, {'x',{0,0,17,10,4,10,17}},
++ {'y',{0,0,17,17,15,1,14}}, {'z',{0,0,31,2,4,8,31}}
++};
++static void direct_text(const Canvas *c, int32_t x, int32_t y, const char *s, int32_t scale)
++{
++    for (; *s; s++, x += 6 * scale) {
++        const Glyph *g = (*s >= 'a' && *s <= 'z') ? &direct_lower[*s-'a'] : glyph(*s);
++        for (int32_t row = 0; row < 7; row++) for (int32_t col = 0; col < 5; col++)
++            if (g->rows[row] & (0x10u >> col))
++                fill(c, x+col*scale, y+row*scale, scale, scale, rgb(255,255,255));
++    }
++}
++int pw_blur_missing_render(const PwPresentTarget *target)
++{
++    static const char *const lines[] = {
++        "Blur not found.", "Copy your own game to /data/Pc/Blur,", "then restart the app."
++    };
++    if (!target || !target->pixels) return PW_ERR_PRECONDITION;
++    if (target->width != W || target->height != H || target->stride < (uint32_t)W*4u ||
++        target->stride%4u || (uint64_t)target->stride*H > target->bytes) return PW_ERR_MALFORMED;
++    const Canvas canvas = { target->pixels, target->stride };
++    fill(&canvas, 0, 0, W, H, rgb(0,0,0));
++    for (unsigned i=0; i<3; i++) direct_text(&canvas, (W-text_width(lines[i],6))/2, 420+(int32_t)i*70, lines[i],6);
++    return PW_OK;
++}
++
++/* The package icon's logo, enlarged with bilinear filtering. */
++static void blur_logo(const Canvas *c, int32_t x, int32_t y, int32_t scale)
++{
++    const int32_t lw = PW_BLUR_LOGO_W, lh = PW_BLUR_LOGO_H;
++    for (int32_t j = 0; j < lh*scale; j++) for (int32_t i = 0; i < lw*scale; i++) {
++        int32_t sx = i*256/scale, sy = j*256/scale;
++        int32_t x0 = sx>>8, y0 = sy>>8, fx = sx&255, fy = sy&255;
++        int32_t x1 = x0+1 < lw ? x0+1 : x0, y1 = y0+1 < lh ? y0+1 : y0;
++        const uint8_t *a = &pw_blur_logo[(size_t)(y0*lw+x0)*3], *b = &pw_blur_logo[(size_t)(y0*lw+x1)*3];
++        const uint8_t *e = &pw_blur_logo[(size_t)(y1*lw+x0)*3], *f = &pw_blur_logo[(size_t)(y1*lw+x1)*3];
++        uint32_t ch[3];
++        for (int k = 0; k < 3; k++) {
++            int32_t top = a[k]*(256-fx)+b[k]*fx, bottom = e[k]*(256-fx)+f[k]*fx;
++            ch[k] = (uint32_t)((top*(256-fy)+bottom*fy)>>16);
++        }
++        /* Fade the crop's edges so the glow has no visible rectangle. */
++        int32_t dx = i < lw*scale-1-i ? i : lw*scale-1-i, dy = j < lh*scale-1-j ? j : lh*scale-1-j;
++        int32_t edge = dx < dy ? dx : dy;
++        if (edge < 56) for (int k = 0; k < 3; k++) ch[k] = ch[k]*(uint32_t)edge/56u;
++        put(c, x+i, y+j, rgb(ch[0], ch[1], ch[2]));
++    }
++}
++
++int pw_blur_start_render(const PwPresentTarget *target, int state)
++{
++    static const char *const missing[] = {
++        "Blur not found.", "Copy your own game to /data/Pc/Blur,", "then restart the app."
++    };
++    static const char ready[] = "Press X to start";
++    static const char *const wrong[] = {
++        "This Blur.exe is not the supported version.", "Copy the supported game to /data/Pc/Blur,", "then restart the app."
++    };
++    static const char *const failed[] = {
++        "Required Blur files could not be installed.", "Free some storage space and restart the app."
++    };
++    if (!target || !target->pixels) return PW_ERR_PRECONDITION;
++    if (target->width != W || target->height != H || target->stride < (uint32_t)W*4u ||
++        target->stride%4u || (uint64_t)target->stride*H > target->bytes) return PW_ERR_MALFORMED;
++    const Canvas canvas = { target->pixels, target->stride };
++    fill(&canvas, 0, 0, W, H, rgb(0,0,0));
++    blur_logo(&canvas, (W-PW_BLUR_LOGO_W*2)/2, 130, 2);
++    if (state == 1) {
++        direct_text(&canvas, (W-text_width(ready,7))/2, 720, ready, 7);
++    } else if (state == 3) {
++        for (unsigned i=0; i<3; i++)
++            direct_text(&canvas, (W-text_width(wrong[i],5))/2, 680+(int32_t)i*64, wrong[i], 5);
++    } else if (state == 2) {
++        for (unsigned i=0; i<2; i++)
++            direct_text(&canvas, (W-text_width(failed[i],5))/2, 690+(int32_t)i*64, failed[i], 5);
++    } else {
++        for (unsigned i=0; i<3; i++)
++            direct_text(&canvas, (W-text_width(missing[i],5))/2, 680+(int32_t)i*64, missing[i], 5);
++    }
++    return PW_OK;
++}
++
+ PwLauncherAction pw_launcher_key_action(uint32_t vk)
+ {
+     switch(vk) {
+@@ -328,3 +424,20 @@
+     }
+     return 0;
+ }
++
++/* First-entry setup only: no library grid or launch confirmation. */
++int pw_blur_name_setup_render(const PwPresentTarget *target,const char *message,int stopped)
++{
++    if(!target || !target->pixels)return PW_ERR_PRECONDITION;
++    if(target->width!=W || target->height!=H || target->stride<(uint32_t)W*4u || target->stride%4u ||
++       (uint64_t)target->stride*H>target->bytes)return PW_ERR_MALFORMED;
++    const Canvas canvas={target->pixels,target->stride};
++    fill(&canvas,0,0,W,H,rgb(0,0,0));
++    const char *lines[]={"Blur player name",message?message:"Choose your player name.",
++        stopped?"Restart the app to try again.":"Use A-Z, 0-9, dot, underscore or hyphen (1-16)."};
++    for(unsigned i=0;i<3;++i) {
++        int scale=i==0?6:4;
++        direct_text(&canvas,(W-text_width(lines[i],scale))/2,380+(int32_t)i*100,lines[i],scale);
++    }
++    return PW_OK;
++}
+diff -ruN a/prospero/src/pw_wine_start.h b/prospero/src/pw_wine_start.h
+--- a/prospero/src/pw_wine_start.h
++++ b/prospero/src/pw_wine_start.h
+@@ -18,7 +18,7 @@
+ #include "pw_wine_launch.h"
+ 
+ enum {
+-    PW_WINE_START_MAX_ENV = 30,  /* +1: WINE_PS4_NETCFG (2026-11-05) */
++    PW_WINE_START_MAX_ENV = 31,  /* +1: stable Blur display-name entry */
+     /* wine, the executable and every word a profile's arguments may split into */
+     PW_WINE_START_MAX_ARGS = 2 + PW_WINE_LAUNCH_WORDS,
+     /* Stages, reported so a failed start names where it stopped. */

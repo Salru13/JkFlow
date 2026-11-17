@@ -59,6 +59,20 @@ none "$pkg/SOURCES.txt" 'LEAD:' "SOURCES.txt still has an internal note"
 for f in "$pkg/LICENSE" "$pkg/THIRD_PARTY.md" "$pkg/README-player.md"; do none "$f" 'LEAD:' "$f has an internal note"; done
 need "$pkg/SOURCES.txt" 'launcher' "SOURCES.txt: the launcher source is published too"
 
+# Review G1 C1/H2/M8 (2026-11-16): one licence per file. Native DXVK (d3d9.c988.dll,
+# dxvknative.prx) is free to use with credit, so no sentence of SOURCES.txt puts it
+# under "All rights reserved"; the offer names its gaps; the licence keeps the DXVK
+# zlib notice with the files.
+checks=$((checks + 1))
+if tr '\n' ' ' < "$pkg/SOURCES.txt" | sed 's/\. /.\n/g' | grep -iE 'native.*all rights reserved|all rights reserved.*native'; then
+    fail "SOURCES.txt puts Native DXVK under all rights reserved (review C1)"
+fi
+need "$pkg/SOURCES.txt" 'Native DXVK by XxXJoker13XxX' "SOURCES.txt: the Native DXVK credit line (review C1)"
+need "$pkg/SOURCES.txt" 'Gaps' "SOURCES.txt: names where the gaps of the source offer are listed (review H2)"
+need "$pkg/LICENSE" 'Gaps' "LICENSE: names where the gaps of the source offer are listed (review H2)"
+need "$pkg/LICENSES/JkFlow-Native-DXVK.txt" 'LICENSES/DXVK-zlib\.txt are included' "Native DXVK licence: the DXVK notice stays with the files (review M8)"
+none "$pkg/README-player.md" '\(draft\)' "README-player is not a draft (review H4)"
+
 # Player README (finding 26).
 need "$pkg/README-player.md" 'GoldHEN' "README-player: GoldHEN"
 need "$pkg/README-player.md" 'FTP' "README-player: FTP"

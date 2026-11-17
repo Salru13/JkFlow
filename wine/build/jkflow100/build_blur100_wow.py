@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 WoW64 modules (plan Task E4, decision 20): wowprospero -> wowblur, names and paths only.
 
 Builds four shipping modules from the retained native248 trees, read only:

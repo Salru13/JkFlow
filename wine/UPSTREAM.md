@@ -56,15 +56,27 @@ unpatched generator gives `f131414e...`, the patched one `ff37856c...`).
 ### Prebuilt Wine PE files
 
 `runtime-files.tsv` lists every file of the package's `win/wine/` tree
-(1684 files: Windows-side DLLs, NLS tables, fonts) with its SHA-256 in the
-package, its SHA-256 as built, and its origin:
+(1775 files: Windows-side DLLs, NLS tables, fonts and the Unix-side prx
+modules) with its SHA-256 in the package, its SHA-256 as built, and its
+origin:
 
 | Origin (column 4) | Files | Source |
 |---|---|---|
 | upstream prebuilt Wine PE (ABI-v4 runtime build of the upstream maintainer, 2026-11-04) | 457 | Wine + prospero-win at the ABI-v4 state of the upstream PS4 port (orbis-win `scripts/ci/README.md`, "abi4"). The exact upstream commit of that build is not recorded. The only change made by this project is the post-link path clean `paths6` (see BUILD.md) |
-| order-284 package (origin not recorded) | 1157 | Copied unchanged from the previous runtime package; the same upstream runtime as the row above for the PE files, plus Wine's NLS tables and fonts. Not rebuilt and not modified by this project |
-| ours: order-284 PE build (patched tree) | 67 | built from the patched Wine tree (prospero-win series + `patches/wine/0001`) |
+| order-284 package (origin not recorded) | 1233 | Copied unchanged from the previous runtime package; the same upstream runtime as the row above for the PE files, plus Wine's NLS tables (in `share/wine/nls/` and, as the same 76 files, in `lib/wine/x86_64-unix/nls/`) and fonts. Not rebuilt and not modified by this project |
+| ours: order-284 PE build (patched tree) | 65 | built from the patched Wine tree (prospero-win series + `patches/wine/0001`) |
 | ours: dsound R3 / direct260 / native269 builds | 3 | `patches/wine/0013`, `0011`, `0010` |
+| ours: `build_blur100_wow.py` | 2 | `x86_64-windows/wow64.dll` (`patches/wine/0014`) and `x86_64-windows/wowblur.dll` (`patches/prospero-win/0001`, `0005`) |
+| Unix-side modules (`x86_64-unix/*.prx`) | 15 | the same files as `sce_module/`: 12 Wine PS4 runtime modules (BUILD.md), `libfreetype.prx` (FreeType, unchanged), `libvulkan.prx` (Mesa, see `mesa/`) and `dxvknative.prx` (Native DXVK, not Wine; see `LICENSES/JkFlow-Native-DXVK.txt`) |
 
 The Unix-side modules (`x86_64-unix/*.prx`, the same files as `sce_module/`)
 are listed in BUILD.md with their sources.
+
+## Title base
+
+The title sources (the Wine PS4 app with the JkFlow launcher linked in) start
+from the same two console-port commits: fresh archives of prospero-win
+`108194e` and orbis-win `9749fcd`, then `patches/title-base/0001-title-base.patch`
+(see `patches/series.txt`, part 4), then the patches in `title/` of this
+repository. One file of the base tree is not published: the Blur logo bitmap
+`prospero/src/pw_blur_logo.h` (Activision artwork; see `patches/series.txt`).

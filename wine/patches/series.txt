@@ -36,3 +36,23 @@ wine/0011-winevulkan-pe-direct260.patch
 wine/0012-winevulkan-unix-parwork260.patch
 wine/0013-dsound-r3.patch
 wine/0014-wow64-wowblur.patch
+
+## 4. The base title tree native298-package277 (TITLE; the title is LGPL-2.1-or-later)
+#    Fresh archives of prospero-win 108194ec78198683d4f038eaae29c08facceeddf as
+#    TITLE/prospero and orbis-win 9749fcd97542a70d739999464b7f9a5d7502d8d0 as
+#    TITLE/orbis (NOT the patched PW/OW of parts 1-2), then in TITLE:
+#    sed -i 's|^ROOT=/home/[^/]*/ps4-gladius$|ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." \&\& pwd -P)|' orbis/scripts/sync-toolchain.sh
+title-base/0001-title-base.patch
+#    The patch covers the four folders the base tree holds as its own copies:
+#    prospero/native, prospero/src, orbis/scripts, orbis/src/native. Every
+#    other folder of the base tree is a link to PW or OW (parts 1-2).
+#    Checked: the result equals those four folders of native298-package277
+#    file for file (diff -r, with patch -p1 and with git apply), except one
+#    file that is not published: prospero/src/pw_blur_logo.h (412x212 RGB
+#    bitmap of the Blur logo, Activision artwork, sha256
+#    6f3394cf33f9280ae5a7780b52c70059d0d97dca1fe4369a6ab41cbe20343bcf), which
+#    prospero/src/pw_launcher_render.c includes. File modes are not in the
+#    patch. The build entry of the base tree is
+#    build/title/build-launcher-base.sh.example. The JkFlow 1.00 title then
+#    applies title/r1, title/prod-audit and title/title-blur100.patch of this
+#    repository on top (title/prepare_blur100.py).

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 ws2_32.prx (plan Task E4): names and paths only, on the shipped native250 resolver build.
 
 Shipped ws2_32 5e18f5eb = research/native-wine/native250-resolver-build.sh (resolver.o from

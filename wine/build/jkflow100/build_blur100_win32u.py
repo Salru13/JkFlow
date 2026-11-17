@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 win32u.prx (plan Task E4): one dev switch path, on the shipped native274 win32u.
 
 Shipped win32u cfc6f06c = native274-win32u-build.py's candidate link (native274-win32u-build.json)

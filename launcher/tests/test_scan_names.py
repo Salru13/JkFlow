@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """Host test for launcher/tools/scan_names.py (plan Task E6).
 
 Run: python3 -I launcher/tests/test_scan_names.py

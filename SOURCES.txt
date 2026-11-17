@@ -5,11 +5,21 @@ Wine and the Wine PS4 runtime (with our changes) and the JkFlow launcher are
 licensed under the GNU Lesser General Public License 2.1 or later
 (LICENSES/LGPL-2.1.txt).
 
-The complete corresponding source of the Wine runtime with our changes and
-of the launcher, for the versions in this package, is published at the
-project's release repository, at the tag of this release:
+The source of the Wine runtime with our changes, of the title (the Wine PS4
+app with the launcher linked in) and of the launcher, for the versions in
+this package, is published at the project's release repository, at the tag
+of this release:
 
 Source: https://github.com/Salru13/JkFlow (tag v1.00)
+
+There: launcher/ (the launcher), title/ (the title changes and build
+scripts), wine/ (the Wine runtime and the title base as patches against the
+upstream commits below, the build scripts, and every file of win/wine/ with
+its hash and origin) and mesa/. What is not yet complete is listed under
+"Gaps" in wine/BUILD.md of the source repository: among others, 457 prebuilt
+Wine PE files come from an upstream build whose exact commit is not recorded,
+other unchanged upstream files are listed by hash only, and no module was
+rebuilt from the published source in a clean tree for this release.
 
 What it is built from
 ---------------------
@@ -20,28 +30,41 @@ Wine
   Changes:   the Wine console-port trees below, plus this project's own
              patches (ntdll "override260", dsound "R3").
 
-Wine console ports this runtime is based on (upstream repositories)
+Wine console ports this runtime and the title are based on (upstream
+repositories)
   https://github.com/mpereiraesaa/prospero-win
   https://github.com/plastikman/prospero-win
   https://github.com/plastikman/orbis-win
+
+clockfix260: in ntdll.prx and wineserver.prx, one 7-byte instruction of the
+clock helper of orbis-compat (MIT object code from the PS4 SDK bundle) was
+replaced in the linked file. The edit and its script are published in
+wine/BUILD.md; it has no source form.
 
 DXVK (zlib/libpng, LICENSES/DXVK-zlib.txt)
   Upstream:  https://github.com/doitsujin/dxvk
   Base:      v1.10.3 (commit e4fd5e9, 2022-08-02)
   Changes:   d3d9.c988.dll (LUT/colour fix and the native client) and
              dxvknative.prx (the native renderer) are built from this base
-             with this project's patches.
+             with this project's patches. These patches are not published
+             (the zlib/libpng licence does not require it); see
+             LICENSES/JkFlow-Native-DXVK.txt.
 
 Mesa / RADV (MIT, LICENSES/Mesa-MIT.txt)
   Upstream:  https://gitlab.freedesktop.org/mesa/mesa
-  Base:      26.3.0-devel
-  Changes:   the PS4 window-system and flip-rate patches in libvulkan.prx.
+  Base:      26.3.0-devel (commit 1a59cc14), with the Mesa changes of the
+             upstream PS4 port (SDK bundle orbis-sdk-v1)
+  Changes:   our window-system and flip-rate patch in libvulkan.prx
+             (mesa/ of the source repository).
 
 FreeType (FTL, LICENSES/FreeType-FTL.txt) and the LLVM runtime
 (Apache-2.0 with the LLVM exception,
 LICENSES/LLVM-Apache-2.0-with-LLVM-exception.txt): unchanged upstream code.
 
 JkFlow launcher: LGPL-2.1-or-later, Copyright (c) 2026 XxXJoker13XxX and
-contributors (see LICENSE). The V7 and S7 DLLs and our changes in the native
-client are separate files: Copyright (c) 2026 XxXJoker13XxX. All rights
-reserved (see LICENSE).
+contributors (see LICENSE). The V7 and S7 DLLs are separate files:
+Copyright (c) 2026 XxXJoker13XxX. All rights reserved (see LICENSE).
+Native DXVK (our changes in dxvknative.prx and d3d9.c988.dll): free to use
+with the credit line "Native DXVK by XxXJoker13XxX"
+(LICENSES/JkFlow-Native-DXVK.txt). Its source is not published; the DXVK
+base stays zlib/libpng.

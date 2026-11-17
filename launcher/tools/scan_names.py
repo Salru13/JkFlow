@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """Name and path scanner for BLUR package trees (plan Task E6).
 
     python3 -I scan_names.py ROOT [--allow FILE] [--private FILE] [--strings]

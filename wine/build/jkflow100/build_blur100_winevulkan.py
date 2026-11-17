@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 winevulkan.prx (plan Task E4): one dev capture path, on the shipped parwork260 module.
 
 Shipped winevulkan 30e2764a (0.8.32/0.8.33 and order 284) was built by

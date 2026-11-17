@@ -3124,7 +3124,15 @@ diff -ruN base/prospero/src/pw_game_profile.c r4/prospero/src/pw_game_profile.c
 diff -ruN base/prospero/src/pw_launcher_render.c r4/prospero/src/pw_launcher_render.c
 --- base/prospero/src/pw_launcher_render.c
 +++ r4/prospero/src/pw_launcher_render.c
-@@ -332,7 +332,7 @@
+@@ -1,7 +1,6 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+ #include "pw_launcher_render.h"
+ #include <string.h>
+-#include "pw_blur_logo.h"
+ 
+ enum { W=PW_LAUNCHER_RENDER_WIDTH,H=PW_LAUNCHER_RENDER_HEIGHT,
+        BAR=96,TASKBAR_Y=996,TILE_W=520,TILE_H=240,TILE_GAP=40,
+@@ -332,7 +331,7 @@
  int pw_blur_missing_render(const PwPresentTarget *target)
  {
      static const char *const lines[] = {
@@ -3133,21 +3141,70 @@ diff -ruN base/prospero/src/pw_launcher_render.c r4/prospero/src/pw_launcher_ren
      };
      if (!target || !target->pixels) return PW_ERR_PRECONDITION;
      if (target->width != W || target->height != H || target->stride < (uint32_t)W*4u ||
-@@ -369,11 +369,11 @@
- int pw_blur_start_render(const PwPresentTarget *target, int state)
- {
-     static const char *const missing[] = {
+@@ -343,62 +342,6 @@
+     return PW_OK;
+ }
+ 
+-/* The package icon's logo, enlarged with bilinear filtering. */
+-static void blur_logo(const Canvas *c, int32_t x, int32_t y, int32_t scale)
+-{
+-    const int32_t lw = PW_BLUR_LOGO_W, lh = PW_BLUR_LOGO_H;
+-    for (int32_t j = 0; j < lh*scale; j++) for (int32_t i = 0; i < lw*scale; i++) {
+-        int32_t sx = i*256/scale, sy = j*256/scale;
+-        int32_t x0 = sx>>8, y0 = sy>>8, fx = sx&255, fy = sy&255;
+-        int32_t x1 = x0+1 < lw ? x0+1 : x0, y1 = y0+1 < lh ? y0+1 : y0;
+-        const uint8_t *a = &pw_blur_logo[(size_t)(y0*lw+x0)*3], *b = &pw_blur_logo[(size_t)(y0*lw+x1)*3];
+-        const uint8_t *e = &pw_blur_logo[(size_t)(y1*lw+x0)*3], *f = &pw_blur_logo[(size_t)(y1*lw+x1)*3];
+-        uint32_t ch[3];
+-        for (int k = 0; k < 3; k++) {
+-            int32_t top = a[k]*(256-fx)+b[k]*fx, bottom = e[k]*(256-fx)+f[k]*fx;
+-            ch[k] = (uint32_t)((top*(256-fy)+bottom*fy)>>16);
+-        }
+-        /* Fade the crop's edges so the glow has no visible rectangle. */
+-        int32_t dx = i < lw*scale-1-i ? i : lw*scale-1-i, dy = j < lh*scale-1-j ? j : lh*scale-1-j;
+-        int32_t edge = dx < dy ? dx : dy;
+-        if (edge < 56) for (int k = 0; k < 3; k++) ch[k] = ch[k]*(uint32_t)edge/56u;
+-        put(c, x+i, y+j, rgb(ch[0], ch[1], ch[2]));
+-    }
+-}
+-
+-int pw_blur_start_render(const PwPresentTarget *target, int state)
+-{
+-    static const char *const missing[] = {
 -        "Blur not found.", "Copy your own game to /data/Pc/Blur,", "then restart the app."
-+        "Blur not found.", "Copy your own Blur folder to /data/JkFlow/Blur,", "then restart the app."
-     };
-     static const char ready[] = "Press X to start";
-     static const char *const wrong[] = {
+-    };
+-    static const char ready[] = "Press X to start";
+-    static const char *const wrong[] = {
 -        "This Blur.exe is not the supported version.", "Copy the supported game to /data/Pc/Blur,", "then restart the app."
-+        "This Blur.exe has not been tested.", "Copy your own Blur folder to /data/JkFlow/Blur,", "then restart the app."
-     };
-     static const char *const failed[] = {
-         "Required Blur files could not be installed.", "Free some storage space and restart the app."
-@@ -425,19 +425,3 @@
+-    };
+-    static const char *const failed[] = {
+-        "Required Blur files could not be installed.", "Free some storage space and restart the app."
+-    };
+-    if (!target || !target->pixels) return PW_ERR_PRECONDITION;
+-    if (target->width != W || target->height != H || target->stride < (uint32_t)W*4u ||
+-        target->stride%4u || (uint64_t)target->stride*H > target->bytes) return PW_ERR_MALFORMED;
+-    const Canvas canvas = { target->pixels, target->stride };
+-    fill(&canvas, 0, 0, W, H, rgb(0,0,0));
+-    blur_logo(&canvas, (W-PW_BLUR_LOGO_W*2)/2, 130, 2);
+-    if (state == 1) {
+-        direct_text(&canvas, (W-text_width(ready,7))/2, 720, ready, 7);
+-    } else if (state == 3) {
+-        for (unsigned i=0; i<3; i++)
+-            direct_text(&canvas, (W-text_width(wrong[i],5))/2, 680+(int32_t)i*64, wrong[i], 5);
+-    } else if (state == 2) {
+-        for (unsigned i=0; i<2; i++)
+-            direct_text(&canvas, (W-text_width(failed[i],5))/2, 690+(int32_t)i*64, failed[i], 5);
+-    } else {
+-        for (unsigned i=0; i<3; i++)
+-            direct_text(&canvas, (W-text_width(missing[i],5))/2, 680+(int32_t)i*64, missing[i], 5);
+-    }
+-    return PW_OK;
+-}
+-
+ PwLauncherAction pw_launcher_key_action(uint32_t vk)
+ {
+     switch(vk) {
+@@ -425,19 +368,3 @@
      return 0;
  }
  

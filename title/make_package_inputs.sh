@@ -71,7 +71,7 @@ check() { [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" ] || { echo "hash mismatc
 # Title r4 rebuilt 2026-11-16 (launcher 905244f + audit 26 local_user, seed END ed7b2bdb,
 # post-link clean): eboot unchanged, prx 354bf12c (uncleaned 01a25295; PKG 289; 288 was dc975e24).
 check "$title/eboot.bin" a71f3f0277f12d16c61e05caca7a515aec99233e5c6c1207584a6e1ef995e83a
-check "$title/prx/relocated_wine_app.prx" d0cee9f775ee9197f50a2003db86038b49bd54c10923c1b4ead1f06cbf808414   # order 290 (findings 37-40); 289: 354bf12c
+check "$title/prx/relocated_wine_app.prx" 8c8e67e970402f44f5636f45df797415dc1cae0bde46af6ee88d5929e975e929   # owner option A 2026-11-17: no Blur logo bitmap; 290-291: d0cee9f7; 289: 354bf12c
 grep -q 'TITLE_ID=BLUR00001 TITLE=JkFlow PW_BUILD_ID=BLUR-1.00 PKG_VERSION=01.00' "$r4/build-launcher.sh"
 # Engine E2-E5 (the pinned Wine/engine module builds).
 declare -A prx=(

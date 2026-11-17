@@ -31,7 +31,10 @@ relocated_wine_app.prx must equal native298's (0.8.33).
     the PS4 local name made portable by blur100-display-name.[ch] instead
     of the system-keyboard name page, which is no longer compiled; and
     audit finding 7: 48 env lines before the title's last ones,
-    pw_wine_start.h's PW_WINE_START_MAX_ENV 52);
+    pw_wine_start.h's PW_WINE_START_MAX_ENV 52; and owner option A
+    2026-11-17: the uncalled start page pw_blur_start_render, its blur_logo
+    and the pw_blur_logo.h include are removed, so the title prx holds no
+    copy of the Blur logo bitmap);
   - the engine seed of E5 (N245_SEED_DIR/N245_SEED_END below) and its PE
     runtime union (PW_PELIB, CPU backend wowblur.dll) for the stage checks;
   - build-launcher.sh ends with postlink_clean.py run (audit findings 6+10:
@@ -71,7 +74,7 @@ R4_SHAS = {
     'prospero/native/wine64_main.c': 'c82f7688cc07bbf32aa08a070a6574c0ea0e3f1f21aadf5d91cf1a6ad77a3d16',
     'prospero/src/pw_game_menu.c': '6fbce3fe1e99f65af9c6d2868307106bb094e2b67cb4f88323473f49be452225',
     'prospero/src/pw_game_profile.c': 'c2074468c2147d54de6aa1838d92c3cc102d0ee4d12deeaae372773bddaba7d6',
-    'prospero/src/pw_launcher_render.c': '5542057153316000ed3f3a9a74448040b6713413015ab6117c857eb79ab3734c',
+    'prospero/src/pw_launcher_render.c': '918d2edf535c6b32979cccc07bfe9f1e1e0625484e5719d2859ecd3e95ebeb92',
     'prospero/src/pw_present.c': '9f5baf9904a657191464aa9900222e3749c2174142025fc5b74a0532226dea99',
     'prospero/src/pw_profile_catalog.c': 'dd0652a0a5602660d331cd55480893b2aa16514dbdd12883f87e58cf66d77ea3',
     'prospero/src/pw_wine_start.h': '282ff066b306d9767eb8643665d9f805c4295d31da3b624e141243860ec75536',

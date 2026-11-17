@@ -5,6 +5,20 @@ The JkFlow 1.00 title (title ID BLUR00001) is the relocatable Wine PS4 app
 linked in. This folder holds the recipe that prepares the title tree, the
 post-link cleans and the package-input script.
 
+## Where the title source comes from
+
+1. The two upstream console-port commits named in `wine/UPSTREAM.md`.
+2. `wine/patches/title-base/0001-title-base.patch` (`wine/patches/series.txt`,
+   part 4): the base title tree `native298-package277`. Its build entry is
+   `wine/build/title/build-launcher-base.sh.example`. One file of that tree,
+   the Blur logo bitmap `src/pw_blur_logo.h` (Activision artwork),
+   is not published; the series names it with its hash. The JkFlow title
+   does not use it: `title-blur100.patch` removes its only user (an
+   uncalled start page), so the title prx holds no copy of the bitmap.
+3. `r1/title-r1.patch`, `prod-audit/title-prod.patch` and
+   `title-blur100.patch` of this folder, applied by `prepare_blur100.py r4`,
+   with the launcher sources of `launcher/`.
+
 ## Files
 
 | File | What |
@@ -21,7 +35,7 @@ post-link cleans and the package-input script.
 ## Steps (Linux)
 
 ```bash
-export JKFLOW_BUILD_ROOT=<build root>          # holds native298-package277 and the engine seed
+export JKFLOW_BUILD_ROOT=<build root>          # holds native298-package277 (see above) and the engine seed
 bash launcher/tests/run.sh                      # bakes launcher/build/gen and runs the launcher tests
 python3 -I title/prepare_blur100.py r4          # -> $JKFLOW_BUILD_ROOT/blur-launcher-r4
 export POSTLINK_PATH_MAP=<path map file>        # see title/postlink-path-map.example
@@ -32,6 +46,6 @@ JKFLOW_STATE_CACHE=<dxvk-native.dxvk-cache> AMAX_ZIP=<amax_client_files.zip> BLU
 ```
 
 `make_package_inputs.sh` only hashes the two zips (to make sure no AMAX or
-Activision file is shipped); it never copies them. The base title tree, the
-build script `build-launcher.sh` of the base tree and the Wine runtime are not
-in this folder; the Wine PS4 runtime source is described in `wine/README.md`.
+Activision file is shipped); it never copies them. The title's build entry
+is described in `wine/BUILD.md` ("Title build entry"), the Wine PS4 runtime
+in `wine/README.md`.

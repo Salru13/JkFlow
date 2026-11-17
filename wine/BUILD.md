@@ -148,9 +148,9 @@ SDK bundle's liborbis-compat and stubs.
 | `sce_module/wineps5.prx`, `xinput1_3.prx` | `77ed4f8c547adc42b8940c0bf77d6791736214ea3ba4d65e4e79c36db0e698dd`, `febeacc05842f3e73bb963b85b62eafafa9e7a55503e4758a240661628bc5355` | W0001 tree, P0001 (`wine/ps5`) | native248 runtime | frozen; paths6b reproduced | partial: no debug data; source by build recipe and file times only |
 | `sce_module/libfreetype.prx` | `4a7f64abfc1448ec803ea7e834905812b3e473ac4056614f9728e7485b55d5c5` | FreeType 2.13.3, unchanged (FTL) | orbis-win `scripts/freetype-prx-ps4.sh` | paths6b reproduced | upstream, unchanged |
 | `sce_module/libvulkan.prx` | `9b00fc046864ae67e9b31865b82dd579994dc5b39950c445ad7e635b1f8ceb32` | Mesa (MIT), see `mesa/` | not in this folder | paths6b NOT reproduced by `tools/paths_clean.py` | out of scope (MIT) |
-| 67 PE files "ours: order-284 PE build" | per file in `runtime-files.tsv` | W0001 tree | `native248-build-pe.sh`, `native248-stage-pe.py` | frozen (no PE source changed after the PE build); paths6 reproduced (520/520) | partial: not DWARF-checked, not rebuilt |
+| 65 PE files "ours: order-284 PE build" | per file in `runtime-files.tsv` | W0001 tree | `native248-build-pe.sh`, `native248-stage-pe.py` | frozen (no PE source changed after the PE build); paths6 reproduced (520/520) | partial: not DWARF-checked, not rebuilt |
 | 457 upstream prebuilt PE files | per file | upstream (UPSTREAM.md); our only change is paths6 | none | paths6 reproduced | upstream commit not recorded (gap 2) |
-| 1157 other `win/wine` files | per file | upstream, unchanged | none | hashes listed | upstream, origin not recorded (gap 2) |
+| 1233 other `win/wine` files (incl. the 76 `x86_64-unix/nls` copies) | per file | upstream, unchanged | none | hashes listed | upstream, origin not recorded (gap 2) |
 | `seed245/blur-native248/` (Wine prefix; `seed.idx` `2c5f2df3426a6de98df89f1c08a251d9b20cd68ee4c5240961ff6d4082b34dab`, END `ed7b2bdb557d3d3e49c2ca72b027fc28cdb6ec7d9d689d49204c5d23e93925e7`) | as listed | made by Wine from the runtime above + `build_blur100_seed.py` | `build_blur100_seed.py`, paths6 registry clean | the build's own control (its receipt) | not verified here |
 
 The shipped prx files are the paths7 outputs of ntdll, wineserver, win32u,
@@ -205,8 +205,15 @@ No module was compiled again for this folder.
 ## Title build entry
 
 The title (`eboot.bin`, `relocated_wine_app.prx`) is described in `title/`.
-Its build entry `build-launcher.sh` is written into the prepared title tree
-by `title/prepare_blur100.py r4` (it is not in a repository);
+`title/prepare_blur100.py r4` starts from the base title tree
+`native298-package277`: its four source folders (`prospero/native`,
+`prospero/src`, `orbis/scripts`, `orbis/src/native`) are upstream prospero-win
+`108194e` and orbis-win `9749fcd` with `patches/title-base/0001-title-base.patch`
+(`patches/series.txt`, part 4; checked with `diff -r`, one unpublished file
+named there); its other folders are links to the trees of parts 1-2. The
+base tree's own build entry is `build/title/build-launcher-base.sh.example`.
+The title's build entry `build-launcher.sh` is written into the prepared
+title tree by `title/prepare_blur100.py r4`;
 `build/title/build-launcher.sh.example` is that script with the build-host
 paths replaced. Inputs:
 
@@ -234,9 +241,10 @@ paths replaced. Inputs:
    output is not claimed.
 2. **Upstream prebuilt PE files.** The 457 prebuilt PE files come from the
    upstream maintainer's ABI-v4 runtime build (2026-11-04); its exact
-   prospero-win/Wine commit is not recorded. The 1157 other unchanged
-   `win/wine` files have no recorded origin either. Both are listed by path
-   and hash in `runtime-files.tsv`.
+   prospero-win/Wine commit is not recorded. The 1233 other unchanged
+   `win/wine` files (1157 plus the same 76 NLS tables again in
+   `x86_64-unix/nls/`) have no recorded origin either. Both are listed by
+   path and hash in `runtime-files.tsv`.
 3. **Modules without debug data** (wineps5, xinput1_3, wow64native, wowblur,
    and the prospero-win shim objects inside every prx) are tied to the
    published source only by source pins and file times.
@@ -248,6 +256,9 @@ paths replaced. Inputs:
    is `title/postlink_devpaths.py`.
 6. **Seed.** The prefix seed was not rebuilt or checked here.
 7. **Build scripts** are copies with build-host paths and internal tool names
-   replaced; they are not byte-identical to what ran, and the JkFlow 1.00
-   stage scripts carry an "All rights reserved" header.
+   replaced; they are not byte-identical to what ran. Like everything in this
+   repository they are LGPL-2.1-or-later unless a file says otherwise.
 8. **Developer code** stays in the published source (see above).
+9. **Title base.** One file of the base title tree, the Blur logo bitmap
+   `prospero/src/pw_blur_logo.h` (Activision artwork, not ours to license),
+   is not published; `patches/series.txt` part 4 names it with its hash.

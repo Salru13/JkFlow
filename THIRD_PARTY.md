@@ -51,4 +51,4 @@ Thanks to plastikman for orbis-win and his PS4 Wine port (github.com/plastikman)
 ## Notes
 
 - No GPL-3.0 code is linked into this package. Only the layout of the OpenOrbis linker script was used, which writes the string `/libexec/ld-elf.so.1` into eboot.bin.
-- The LGPL source for the Wine runtime with our changes: see `SOURCES.txt`.
+- The LGPL source for the Wine runtime and the title with our changes: see `SOURCES.txt`. What is not yet complete is listed under "Gaps" in `wine/BUILD.md` of the source repository.

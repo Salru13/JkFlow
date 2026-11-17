@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 wineserver.prx (plan Task E4): names and paths only, on the shipped clockfix260 server.
 
 Shipped wineserver 46edbb33 = native266-wineserver-r1 candidate link (receipt.json) with

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 # Name and path scanner host test (plan Task E6).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

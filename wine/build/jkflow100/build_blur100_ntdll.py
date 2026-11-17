@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 XxXJoker13XxX. All rights reserved.
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 XxXJoker13XxX and contributors
 """BLUR 1.00 ntdll.prx (plan Task E4): names and paths only, on the shipped override260 ntdll.
 
 Recipe = native288-recipes/override260build.py (the shipped ntdll 3f7e34bb: spin260 + clock fix +
