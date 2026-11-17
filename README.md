@@ -14,10 +14,10 @@ JkFlow is a PS4 app with its own launcher, a Wine runtime for the console and a 
 
 ## Requirements
 
-- A PS4, PS4 Slim or PS4 Pro with GoldHEN running (tested on a PS4 Slim; 60 FPS is meant for a PS4 Pro).
+- A PS4 with GoldHEN.
 - A computer with an FTP client (GoldHEN has an FTP server). USB drives are not supported.
 - Your own copy of Blur (PC). It is not included.
-- About 0.5 GB for the package, plus your Blur folder.
+- About 1 GB for JkFlow, plus your Blur game folder (about 8 GB).
 - Internet only for online play.
 
 ## Download
@@ -52,7 +52,7 @@ A `Blur.exe` that JkFlow does not recognise always runs at 30 FPS, menus include
 
 ### Bring your save (optional)
 
-Have a Blur save from a PC? On the PC it is in `%APPDATA%\Bizarre Creations\Blur\save`. Copy only the file `blursave` over FTP to `/data/JkFlow/System/import/blursave`, then open **Patch** and press Cross.
+Have a Blur save from a PC? On the PC it is in `%APPDATA%\Bizarre Creations\Blur\save`. Copy only the file `blursave` over FTP to `/data/JkFlow/System/import/blursave`, then open **Patch** and press Cross. Already patched? Just copy the save file and run **Patch** again.
 
 - No save on the PS4 yet: it is imported.
 - A save already on the PS4: JkFlow asks. **Keep** (the default) leaves your save as it is; **Use import** first backs up your current save, then imports.
