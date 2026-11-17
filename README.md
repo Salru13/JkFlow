@@ -26,8 +26,8 @@ JkFlow is a PS4 app with its own launcher, a Wine runtime for the console and a 
 
 ## Getting started
 
-1. Download `JkFlow-1.00.pkg` from [Releases](https://github.com/Salru13/JkFlow/releases), install it with GoldHEN and open JkFlow once.
-2. Copy all your Blur files over FTP into `/data/JkFlow/Blur`. `Blur.exe` must be directly in that folder.
+1. Over FTP, create the folder `/data/JkFlow/Blur` and copy all your Blur files into it. `Blur.exe` must be directly in that folder.
+2. Download `JkFlow-1.00.pkg` from [Releases](https://github.com/Salru13/JkFlow/releases), install it with GoldHEN and open JkFlow.
 3. In JkFlow, open **Patch** and choose **Patch for offline play**, or **Patch for online play (AMAX)** to also download the AMAX online client.
 4. Press **Play**.
 
