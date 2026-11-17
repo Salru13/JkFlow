@@ -15,7 +15,7 @@ JkFlow is a PS4 app with its own launcher, a Wine runtime for the console and a 
 ## Requirements
 
 - A PS4 with GoldHEN.
-- A computer with an FTP client (GoldHEN has an FTP server). USB drives are not supported.
+- A way to copy files to the PS4: FTP (GoldHEN has an FTP server), or a USB drive and a file manager app on the PS4.
 - Your own copy of Blur (PC). It is not included.
 - About 1 GB for JkFlow, plus your Blur game folder (about 8 GB).
 - Internet only for online play.
@@ -135,7 +135,7 @@ Everything JkFlow keeps is in `/data/JkFlow`: your `Blur` folder, `System` (sett
 
 ### Can I use a USB drive?
 
-No. Copy files to the PS4 over FTP (GoldHEN has an FTP server).
+Yes, to copy the files. Use a file manager app on the PS4 to copy them from the USB drive into `/data/JkFlow/...`, or copy them over FTP. JkFlow does not run the game from the USB drive: your Blur folder must be in `/data/JkFlow/Blur`.
 
 ### Can I bring my PC save?
 

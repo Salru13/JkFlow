@@ -8,8 +8,9 @@ your own copy.
 
 - A PS4 with GoldHEN (the homebrew enabler) running. JkFlow is tested on a
   PS4 Slim.
-- An FTP client on your computer (GoldHEN has an FTP server). Files are
-  copied to the PS4 over FTP only: USB drives are not supported.
+- A way to copy files to the PS4: FTP (GoldHEN has an FTP server), or a
+  USB drive and a file manager app on the PS4. The game must end up in
+  /data/JkFlow/Blur; JkFlow does not run it from the USB drive.
 - Your own Blur (PC) folder.
 
 ## Install
